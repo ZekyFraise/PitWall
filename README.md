@@ -1,10 +1,3 @@
-Pour que ton dépôt GitHub ait l'air le plus pro et sérieux possible aux yeux d'Anthropic (ou de n'importe quel autre développeur), il te faut un fichier `README.md` propre et structuré.
-
-Voici un modèle complet en anglais (le standard sur GitHub) spécialement taillé pour ton projet de simulation de gestion de sport automobile. Tu as juste à le copier-coller dans un fichier nommé `README.md` à la racine de ton projet.
-
----
-
-```markdown
 # Open-Source Motorsport Management Simulation
 
 A lightweight, modular, and data-driven browser-based motorsport management simulation game. This project is built to run in local server environments, prioritizing deep strategic balancing and realistic mechanics over resource-heavy graphics.
@@ -67,14 +60,5 @@ Contributions are welcome! Whether it's database balancing, new simulation mecha
 
 ## 📄 License
 
-This project is open-source and available under the [MIT License](https://www.google.com/search?q=LICENSE).
+This project is open-source and available under the MIT License.
 
-```
-
----
-
-### 💡 Ce que ça va changer pour ta demande :
-* **Crédibilité instantanée :** Quand l'API ou l'équipe d'Anthropic va analyser ton dépôt devenu public, ils verront des termes techniques comme *"automated multi-season simulation"*, *"world generation fail-safes"* et *"modular logic separation"*. 
-* **Alignement parfait :** Cela correspond exactement aux arguments de débogage et de traitement de logs complexes que l'on a mis dans ton formulaire de demande.
-
-```
