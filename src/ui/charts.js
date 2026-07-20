@@ -15,6 +15,13 @@ function labelEl(text, topPct) {
   return `<span class="chart-axis-label" style="top:${topPct.toFixed(2)}%">${text}</span>`;
 }
 
+function xLabelsRow(items) {
+  if (!items.length) return "";
+  return `<div class="chart-x-labels">${items
+    .map(({ text, leftPct }) => `<span class="chart-x-label" style="left:${leftPct.toFixed(2)}%">${text}</span>`)
+    .join("")}</div>`;
+}
+
 function hlineEl(topPct) {
   return `<div class="chart-hline" style="top:${topPct.toFixed(2)}%"></div>`;
 }
@@ -49,6 +56,17 @@ export function lineChart(points, { height = 160, color = "var(--agency-color)" 
   if (min < 0) labels.push(labelEl(formatAxisValue(min), (plotBottom / height) * 100));
   labels.push(labelEl("0€", (zeroY / height) * 100));
 
+  // Only a handful of x-axis ticks are shown (never one per point) so labels stay legible
+  // even with up to 52 weekly points crammed into the same width.
+  const maxTicks = 6;
+  const tickStep = Math.max(1, Math.ceil(points.length / maxTicks));
+  const tickIndices = [];
+  for (let i = 0; i < points.length; i += tickStep) tickIndices.push(i);
+  if (tickIndices[tickIndices.length - 1] !== points.length - 1) tickIndices.push(points.length - 1);
+  const xLabels = tickIndices
+    .filter((i) => points[i].label)
+    .map((i) => ({ text: points[i].label, leftPct: (coords[i][0] / PLOT_WIDTH) * 100 }));
+
   return `
     <div class="chart-wrap" style="height:${height}px">
       <div class="chart-axis-labels">${labels.join("")}</div>
@@ -65,7 +83,8 @@ export function lineChart(points, { height = 160, color = "var(--agency-color)" 
           <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
         </svg>
       </div>
-    </div>`;
+    </div>
+    ${xLabelsRow(xLabels)}`;
 }
 
 export function barChart(bars, { height = 160, trend = null, barGapRatio = 0.3 } = {}) {
@@ -123,6 +142,17 @@ export function barChart(bars, { height = 160, trend = null, barGapRatio = 0.3 }
     labelEl(`-${formatAxisValue(maxValue)}`, (plotBottom / height) * 100),
   ];
 
+  // Same tick-sampling as lineChart — one label per bar would overlap once there are more
+  // than a handful of columns (e.g. weekly granularity over a full season).
+  const maxTicks = 8;
+  const tickStep = Math.max(1, Math.ceil(bars.length / maxTicks));
+  const tickIndices = [];
+  for (let i = 0; i < bars.length; i += tickStep) tickIndices.push(i);
+  if (tickIndices[tickIndices.length - 1] !== bars.length - 1) tickIndices.push(bars.length - 1);
+  const xLabels = tickIndices
+    .filter((i) => bars[i].label)
+    .map((i) => ({ text: bars[i].label, leftPct: ((i * groupWidth + groupWidth / 2) / PLOT_WIDTH) * 100 }));
+
   return `
     <div class="chart-wrap" style="height:${height}px">
       <div class="chart-axis-labels">${labels.join("")}</div>
@@ -131,5 +161,6 @@ export function barChart(bars, { height = 160, trend = null, barGapRatio = 0.3 }
         <svg viewBox="0 0 ${PLOT_WIDTH} ${height}" preserveAspectRatio="none" class="chart-svg">${rects}${trendSvg}</svg>
         <div class="chart-hover-layer">${hoverZones}</div>
       </div>
-    </div>`;
+    </div>
+    ${xLabelsRow(xLabels)}`;
 }

@@ -1,10 +1,9 @@
-import { CATEGORY_BY_ID, PRO_TIER_THRESHOLD } from "./data.js";
+import { CATEGORY_BY_ID, PRO_TIER_THRESHOLD, SEASON_WEEKS, PRO_COMMISSION_RATE } from "./data.js";
 import { overallRating } from "./driver.js";
 import { releaseSeatAndBackfill } from "./team.js";
 import { rosterCapacity, agencyAppeal } from "./infrastructure.js";
 import { bumpRivalReputation } from "./rivals.js";
 import { recordTransaction } from "./finance.js";
-import { racesUntilSeasonEnd } from "./standings.js";
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -21,29 +20,32 @@ export function approachTerms(state, driver) {
   return { category, isRivalManaged, threshold, appeal, cost, successChance };
 }
 
-export function approachDriver(state, driverId, rng) {
+export function approachDriver(state, driverId, rng, { force = false } = {}) {
   if (state.drivers.some((d) => d.id === driverId)) {
     return { ok: false, error: "Ce pilote fait déjà partie de ton agence." };
   }
   const driver = state.aiDrivers[driverId];
   if (!driver) return { ok: false, error: "Pilote introuvable." };
-  if (state.drivers.length >= rosterCapacity(state)) {
+  if (!force && state.drivers.length >= rosterCapacity(state)) {
     return { ok: false, error: "Effectif complet — améliore tes bureaux pour recruter davantage." };
   }
 
-  const { category, isRivalManaged, threshold, appeal, cost, successChance } = approachTerms(state, driver);
-  if (appeal < threshold) {
+  const { category, isRivalManaged, threshold, appeal, cost: rawCost, successChance } = approachTerms(state, driver);
+  const cost = force ? 0 : rawCost;
+  if (!force && appeal < threshold) {
     return { ok: false, error: "Réputation insuffisante pour approcher ce pilote." };
   }
-  if (state.agency.money < cost) {
+  if (!force && state.agency.money < cost) {
     return { ok: false, error: "Budget insuffisant." };
   }
-  if (isRivalManaged && rng() >= successChance) {
+  if (!force && isRivalManaged && rng() >= successChance) {
     return { ok: false, error: "Négociation échouée — le pilote reste chez son agence actuelle." };
   }
 
-  state.agency.money -= cost;
-  recordTransaction(state, "approach-driver", `Recrutement — ${driver.name}`, -cost);
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "approach-driver", `Recrutement — ${driver.name}`, -cost);
+  }
 
   const previousAgencyId = driver.agencyId;
   const previousAgencyName = isRivalManaged
@@ -56,9 +58,12 @@ export function approachDriver(state, driverId, rng) {
   releaseSeatAndBackfill(state, driver.id, rng);
   delete state.aiDrivers[driver.id];
 
-  driver.contract = { racesRemaining: racesUntilSeasonEnd(state, category.id), weeklyWage: Math.round(cost / 20) };
+  const isPro = category.tier >= PRO_TIER_THRESHOLD;
+  driver.contract = isPro
+    ? { weeksRemaining: SEASON_WEEKS, weeklyWage: 0, commissionRate: PRO_COMMISSION_RATE }
+    : { weeksRemaining: SEASON_WEEKS, weeklyWage: Math.round(cost / 20), commissionRate: 0 };
   driver.weeksWithoutContract = 0;
-  driver.isPro = category.tier >= PRO_TIER_THRESHOLD;
+  driver.isPro = isPro;
   driver.highestTierReached = Math.max(driver.highestTierReached ?? 0, category.tier);
   driver.isAI = false;
   driver.agencyId = null;

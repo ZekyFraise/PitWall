@@ -9,6 +9,7 @@ import {
   isMercatoWindow,
   allocateVariableTeamSizes,
   MAX_DRIVER_WORKLOAD,
+  PRO_COMMISSION_RATE,
 } from "./data.js";
 import { generateDriver, getDriverById, overallRating, pickRaceNumber } from "./driver.js";
 import { recordTransaction } from "./finance.js";
@@ -219,6 +220,28 @@ export function teamSeatCost(team, occupantDriver) {
   return Math.round(base + bump);
 }
 
+// Read-only cost preview for a second-championship seat — mirrors the empty-seat-or-weakest-AI
+// logic joinSecondaryChampionship uses when it actually charges the player, so the price shown
+// before joining matches the price paid.
+export function secondarySeatCost(state, team) {
+  const emptyIndex = team.seats.findIndex((s) => s.driverId === null);
+  if (emptyIndex !== -1) return Math.round(teamSeatCost(team, null) * (1 - negotiationDiscount(state)));
+
+  let weakestOccupant = null;
+  let weakestRating = Infinity;
+  for (const seat of team.seats) {
+    const occ = getDriverById(state, seat.driverId);
+    if (occ && occ.isAI) {
+      const rating = overallRating(occ);
+      if (rating < weakestRating) {
+        weakestRating = rating;
+        weakestOccupant = occ;
+      }
+    }
+  }
+  return Math.round(teamSeatCost(team, weakestOccupant) * (1 - negotiationDiscount(state)));
+}
+
 export function releaseSeatAndBackfill(state, driverId, rng) {
   const found = findSeatOfDriver(state, driverId);
   if (!found) return;
@@ -227,6 +250,17 @@ export function releaseSeatAndBackfill(state, driverId, rng) {
   const freshAI = generateAIDriver(rng, found.team, category, usedNumbers);
   state.aiDrivers[freshAI.id] = freshAI;
   found.seat.driverId = freshAI.id;
+}
+
+// Fully benches a driver: frees the team seat (releaseSeatAndBackfill) AND clears both
+// teamId and categoryId — without the categoryId clear, "Mes pilotes" keeps showing the
+// old category for a driver who no longer has any seat there.
+export function benchDriver(state, driverId, rng) {
+  const driver = state.drivers.find((d) => d.id === driverId) ?? getDriverById(state, driverId);
+  if (!driver) return;
+  releaseSeatAndBackfill(state, driverId, rng);
+  driver.teamId = null;
+  driver.categoryId = null;
 }
 
 export function listJoinableTeams(state, driver) {
@@ -261,12 +295,12 @@ export function listJoinableTeams(state, driver) {
   return options;
 }
 
-export function proposeToTeams(state, driverId, budget, rng) {
+export function proposeToTeams(state, driverId, budget, rng, { force = false } = {}) {
   const driver = state.drivers.find((d) => d.id === driverId);
   if (!driver) return { ok: false, error: "Pilote introuvable." };
 
-  budget = Math.max(0, Math.round(budget));
-  if (budget > state.agency.money) return { ok: false, error: "Budget de recrutement supérieur à la trésorerie." };
+  budget = force ? 0 : Math.max(0, Math.round(budget));
+  if (!force && budget > state.agency.money) return { ok: false, error: "Budget de recrutement supérieur à la trésorerie." };
 
   const rating = overallRating(driver);
   const candidates = listJoinableTeams(state, driver).filter((c) => !c.full && !c.isCurrent);
@@ -278,7 +312,7 @@ export function proposeToTeams(state, driverId, budget, rng) {
     const baseline = Math.max(1000, c.cost);
     const budgetBonus = budget > 0 ? clamp(Math.sqrt(budget / baseline) * 12, 0, 25) : 0;
     const acceptChance = clamp(0.5 + (rating + budgetBonus - c.team.prestige) / 55, 0.05, 0.95) * outOfWindowPenalty;
-    if (rng() < acceptChance) {
+    if (force || rng() < acceptChance) {
       offers.push({
         teamId: c.team.id,
         teamName: c.team.name,
@@ -296,14 +330,14 @@ export function proposeToTeams(state, driverId, budget, rng) {
   return { ok: true, offers };
 }
 
-export function joinTeam(state, driverId, teamId, rng) {
-  const result = assignSeat(state, driverId, teamId, rng);
+export function joinTeam(state, driverId, teamId, rng, { force = false } = {}) {
+  const result = assignSeat(state, driverId, teamId, rng, { force });
   if (result.ok) {
     const driver = state.drivers.find((d) => d.id === driverId);
     if (driver) {
       // The recruitment budget promised during the proposal is actually paid out
       // to the team once a seat is accepted — it is a real bribe, not free odds.
-      const budget = driver.pendingOfferBudget ?? 0;
+      const budget = force ? 0 : (driver.pendingOfferBudget ?? 0);
       if (budget > 0) {
         state.agency.money -= budget;
         recordTransaction(state, "recruitment-budget", `Budget de recrutement — ${driver.name}`, -budget);
@@ -324,7 +358,7 @@ export function totalWorkload(driver) {
   return total;
 }
 
-export function joinSecondaryChampionship(state, driverId, teamId, rng) {
+export function joinSecondaryChampionship(state, driverId, teamId, rng, { force = false } = {}) {
   const driver = state.drivers.find((d) => d.id === driverId);
   if (!driver) return { ok: false, error: "Pilote introuvable." };
 
@@ -335,13 +369,13 @@ export function joinSecondaryChampionship(state, driverId, teamId, rng) {
   if (category.id === driver.categoryId || driver.secondarySeats.some((s) => s.categoryId === category.id)) {
     return { ok: false, error: "Déjà engagé dans cette catégorie." };
   }
-  if (category.repRequired > state.agency.reputation) {
+  if (!force && category.repRequired > state.agency.reputation) {
     return { ok: false, error: "Réputation insuffisante pour cette catégorie." };
   }
-  if (category.tier < (driver.highestTierReached ?? 0)) {
+  if (!force && category.tier < (driver.highestTierReached ?? 0)) {
     return { ok: false, error: "Ce pilote ne peut plus redescendre dans une catégorie inférieure." };
   }
-  if (totalWorkload(driver) + category.workload > MAX_DRIVER_WORKLOAD) {
+  if (!force && totalWorkload(driver) + category.workload > MAX_DRIVER_WORKLOAD) {
     return { ok: false, error: "Charge de travail du pilote dépassée." };
   }
 
@@ -365,11 +399,13 @@ export function joinSecondaryChampionship(state, driverId, teamId, rng) {
     occupant = getDriverById(state, team.seats[seatIndex].driverId);
   }
 
-  const cost = Math.round(teamSeatCost(team, occupant) * (1 - negotiationDiscount(state)));
-  if (state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  const cost = force ? 0 : Math.round(teamSeatCost(team, occupant) * (1 - negotiationDiscount(state)));
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
 
-  state.agency.money -= cost;
-  recordTransaction(state, "seat-cost", `${team.name} — ${driver.name} (2e championnat)`, -cost);
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "seat-cost", `${team.name} — ${driver.name} (2e championnat)`, -cost);
+  }
   if (occupant) delete state.aiDrivers[occupant.id];
 
   team.seats[seatIndex].driverId = driverId;
@@ -382,6 +418,10 @@ export function joinSecondaryChampionship(state, driverId, teamId, rng) {
 
   if (!driver.isPro && category.tier >= PRO_TIER_THRESHOLD) {
     driver.isPro = true;
+    // An existing agency contract was negotiated under amateur terms (weeklyWage, no
+    // commission) — convert it to pro terms (commission, no wage) so promotion doesn't
+    // silently leave a 0% commission in effect until the next renegotiation.
+    if (driver.contract) driver.contract = { weeksRemaining: driver.contract.weeksRemaining, weeklyWage: 0, commissionRate: PRO_COMMISSION_RATE };
     const commission = Math.round(team.prestige * 400);
     state.agency.money += commission;
     recordTransaction(state, "pro-commission", `Passage pro — ${driver.name}`, commission);
@@ -390,7 +430,43 @@ export function joinSecondaryChampionship(state, driverId, teamId, rng) {
   return { ok: true };
 }
 
-export function assignSeat(state, driverId, teamId, rng) {
+// Closes out a driver's time with their current team as a standalone "Historique" row before
+// they move on — without this, a mid-season team change would only ever leave the LAST team's
+// stats in the season-end summary, silently losing every race raced with the team(s) before
+// it. Called from both assignSeat (driver actively changes team) and simulate.js's contract
+// expiry path (driver loses their seat without immediately picking up a new one).
+export function recordSeasonStint(state, driver) {
+  if (driver.teamId == null) return;
+  const oldTeam = findTeamById(state, driver.teamId);
+  const standingsKey = oldTeam?.subClass ? `${driver.categoryId}:${oldTeam.subClass}` : driver.categoryId;
+  const standings = state.standings[standingsKey];
+  const seasonResults = standings
+    ? driver.careerResults.filter((r) => r.categoryId === driver.categoryId).slice(-standings.race)
+    : [];
+  const stintResults = seasonResults.filter((r) => r.teamId === driver.teamId);
+  if (stintResults.length === 0) return;
+
+  const rating = overallRating(driver);
+  // Mirrors driverStats.js's driverMarketValue formula — duplicated here (not imported) to
+  // avoid a team.js -> driverStats.js -> team.js circular import (driverStats.js already
+  // imports findTeamById from this file).
+  const ageFactor = driver.age <= 23 ? 1.3 : driver.age <= 28 ? 1.1 : driver.age <= 32 ? 0.9 : 0.6;
+  const value = Math.round((rating * 500 + driver.potential * 300) * ageFactor);
+
+  driver.seasonHistory.push({
+    seasonNumber: standings?.seasonNumber ?? 1,
+    categoryId: driver.categoryId,
+    teamName: oldTeam ? oldTeam.name : "Écurie précédente",
+    rating: Math.round(rating),
+    value,
+    races: stintResults.length,
+    wins: stintResults.filter((r) => !r.dnf && r.position === 1).length,
+    podiums: stintResults.filter((r) => !r.dnf && r.position <= 3).length,
+    championshipPosition: null,
+  });
+}
+
+export function assignSeat(state, driverId, teamId, rng, { force = false } = {}) {
   const driver = state.drivers.find((d) => d.id === driverId);
   if (!driver) return { ok: false, error: "Pilote introuvable." };
 
@@ -398,10 +474,10 @@ export function assignSeat(state, driverId, teamId, rng) {
   if (!team) return { ok: false, error: "Écurie introuvable." };
 
   const category = CATEGORY_BY_ID[team.categoryId];
-  if (category.id !== driver.categoryId && category.repRequired > state.agency.reputation) {
+  if (!force && category.id !== driver.categoryId && category.repRequired > state.agency.reputation) {
     return { ok: false, error: "Réputation insuffisante pour cette catégorie." };
   }
-  if (category.tier < (driver.highestTierReached ?? 0)) {
+  if (!force && category.tier < (driver.highestTierReached ?? 0)) {
     return { ok: false, error: "Ce pilote ne peut plus redescendre dans une catégorie inférieure." };
   }
 
@@ -425,16 +501,19 @@ export function assignSeat(state, driverId, teamId, rng) {
     occupant = getDriverById(state, team.seats[seatIndex].driverId);
   }
 
-  const cost = Math.round(teamSeatCost(team, occupant) * (1 - negotiationDiscount(state)));
-  if (state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  const cost = force ? 0 : Math.round(teamSeatCost(team, occupant) * (1 - negotiationDiscount(state)));
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
 
-  state.agency.money -= cost;
-  recordTransaction(state, "seat-cost", `${team.name} — ${driver.name}`, -cost);
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "seat-cost", `${team.name} — ${driver.name}`, -cost);
+  }
   if (occupant) delete state.aiDrivers[occupant.id];
 
   releaseSeatAndBackfill(state, driverId, rng);
 
   if (driver.teamId !== team.id) {
+    recordSeasonStint(state, driver);
     driver.teamRelationship = 60;
   }
   const wasBenched = driver.teamId == null;
@@ -457,10 +536,35 @@ export function assignSeat(state, driverId, teamId, rng) {
 
   if (!driver.isPro && category.tier >= PRO_TIER_THRESHOLD) {
     driver.isPro = true;
+    // An existing agency contract was negotiated under amateur terms (weeklyWage, no
+    // commission) — convert it to pro terms (commission, no wage) so promotion doesn't
+    // silently leave a 0% commission in effect until the next renegotiation.
+    if (driver.contract) driver.contract = { weeksRemaining: driver.contract.weeksRemaining, weeklyWage: 0, commissionRate: PRO_COMMISSION_RATE };
     const commission = Math.round(team.prestige * 400);
     state.agency.money += commission;
     recordTransaction(state, "pro-commission", `Passage pro — ${driver.name}`, commission);
   }
 
   return { ok: true };
+}
+
+// Dev-only: force a driver into the first available team seat (its current category first,
+// then the next ones up), bypassing reputation/tier gating and seat cost via assignSeat's
+// force flag — for quickly testing team-dependent features without a real negotiation.
+export function devForceTeamContract(state, driverId, rng) {
+  const driver = state.drivers.find((d) => d.id === driverId);
+  if (!driver) return { ok: false, error: "Pilote introuvable." };
+
+  const categories = driver.categoryId
+    ? [CATEGORY_BY_ID[driver.categoryId], ...nextCategories(driver.categoryId)]
+    : nextCategories(null);
+
+  for (const category of categories) {
+    if (!category) continue;
+    for (const team of state.teams[category.id]) {
+      const result = assignSeat(state, driverId, team.id, rng, { force: true });
+      if (result.ok) return result;
+    }
+  }
+  return { ok: false, error: "Aucune écurie disponible pour ce pilote." };
 }

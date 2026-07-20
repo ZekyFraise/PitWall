@@ -95,6 +95,21 @@ export function poachCompensation(driver) {
   return Math.round(driverMarketValue(driver) * (0.1 + tier * 0.05));
 }
 
+// Immediately removes a driver from the agency (used by the poaching dilemma "leaves now"
+// outcome). Frees any team seat, pays the tier-scaled compensation, bumps a rival, and
+// returns a news log entry describing the departure.
+export function poachDriverAway(state, driver, rng) {
+  const agency = randomAgency(rng);
+  const buyout = poachCompensation(driver);
+  if (driver.teamId != null) releaseSeatAndBackfill(state, driver.id, rng);
+  bumpRivalReputation(state, agency.id, 2);
+  state.agency.reputation = Math.max(0, state.agency.reputation - 2);
+  state.agency.money += buyout;
+  recordTransaction(state, "poach-buyout", `Indemnité de départ — ${driver.name}`, buyout);
+  state.drivers = state.drivers.filter((d) => d.id !== driver.id);
+  return { type: "rival-poach", agencyName: agency.name, driverName: driver.name, buyout };
+}
+
 export function tickBenchedDriverDecay(state, rng) {
   const entries = [];
   const stillSigned = [];

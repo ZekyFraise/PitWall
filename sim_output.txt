@@ -8,123 +8,123 @@
 [Season 1 - Week 2] Action: Simuler la semaine | Game Reaction: Budget: 6 605€ | Feedback/Balance Warning: None
 [Season 1 - Week 3] Action: Simuler la semaine | Game Reaction: Budget: 6 766€ | Feedback/Balance Warning: None
 [Season 1 - Week 4] Action: Simuler la semaine | Game Reaction: Budget: 6 927€ | Feedback/Balance Warning: None
-[Season 1 - Week 5] Action: Simuler la semaine | Game Reaction: Événement "Négociation salariale" -> option 2 -> Enzo Bianchi est déçu : relation agence -6. · Budget: 7 088€ | Feedback/Balance Warning: None
+[Season 1 - Week 5] Action: Simuler la semaine | Game Reaction: Événement "Blessure légère, veut courir" -> option 1 -> L'écurie regrette son absence. · Budget: 7 088€ | Feedback/Balance Warning: None
 [Season 1 - Week 6] Action: Simuler la semaine | Game Reaction: Budget: 7 249€ | Feedback/Balance Warning: None
-[Season 1 - Week 7] Action: Simuler la semaine | Game Reaction: Budget: 3 873€ | Feedback/Balance Warning: None
-[Season 1 - Week 8] Action: Simuler la semaine | Game Reaction: Budget: 4 034€ | Feedback/Balance Warning: None
-[Season 1 - Week 9] Action: Simuler la semaine | Game Reaction: Course: P54/60 (abandon), prime +0€ · Budget: 3 695€ | Feedback/Balance Warning: None
-[Season 1 - Week 10] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→22.2 | B —→— · Budget: 3 856€ | Feedback/Balance Warning: None
-[Season 1 - Week 11] Action: Simuler la semaine | Game Reaction: Course: P57/60 (abandon), prime +0€ · Budget: 3 517€ | Feedback/Balance Warning: None
-[Season 1 - Week 12] Action: Simuler la semaine | Game Reaction: Budget: 3 678€ | Feedback/Balance Warning: None
-[Season 1 - Week 13] Action: Simuler la semaine | Game Reaction: Course: P50/60, prime +66€ · Budget: 3 405€ | Feedback/Balance Warning: None
-[Season 1 - Week 14] Action: Simuler la semaine | Game Reaction: Budget: 3 566€ | Feedback/Balance Warning: None
-[Season 1 - Week 15] Action: Simuler la semaine | Game Reaction: Course: P32/60, prime +165€ · Budget: 3 392€ | Feedback/Balance Warning: None
-[Season 1 - Week 16] Action: Simuler la semaine | Game Reaction: Budget: 3 553€ | Feedback/Balance Warning: None
-[Season 1 - Week 17] Action: Simuler la semaine | Game Reaction: Course: P41/60, prime +111€ · Budget: 3 325€ | Feedback/Balance Warning: None
-[Season 1 - Week 18] Action: Simuler la semaine | Game Reaction: Budget: 3 486€ | Feedback/Balance Warning: None
-[Season 1 - Week 19] Action: Simuler la semaine | Game Reaction: Événement "Programme d'entraînement intensif" -> option 1 -> Enzo Bianchi continue son programme habituel. · Course: P53/60, prime +54€ · Budget: 3 201€ | Feedback/Balance Warning: None
-[Season 1 - Week 20] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→30.4 | B —→— · Budget: 3 362€ | Feedback/Balance Warning: None
-[Season 1 - Week 20] Action: SUBVENTION DE TEST +25 000€ (affordance de harnais, hors gameplay) | Game Reaction: Fonds propres insuffisants pour un 2e pilote après 20 semaines — injection pour pouvoir tester la chaîne loyauté/dilemme/débauchage · Budget: 28 362€ | Feedback/Balance Warning: ÉQUILIBRAGE: avec frais amateurs /40 et primes karting faibles, un 2e pilote est infinançable en S1 sur fonds propres — nerf peut-être trop agressif
-[Season 1 - Week 21] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Budget: 28 145€ | Feedback/Balance Warning: None
-[Season 1 - Week 22] Action: Simuler la semaine | Game Reaction: Budget: 28 306€ | Feedback/Balance Warning: None
-[Season 1 - Week 23] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Budget: 28 089€ | Feedback/Balance Warning: None
-[Season 1 - Week 24] Action: Simuler la semaine | Game Reaction: Budget: 28 250€ | Feedback/Balance Warning: None
-[Season 1 - Week 24] Action: SCOUTING APPROFONDI sur Kenji Rossi (2 500€) | Game Reaction: Potentiel EXACT révélé: 50 (vs fourchettes du scouting normal), cooldown scouting auto: 2 sem · Budget: 25 750€ | Feedback/Balance Warning: None
-[Season 1 - Week 24] Action: Signer Kenji Rossi et le laisser VOLONTAIREMENT sans baquet | Game Reaction: Contrat agence actif, teamId=null => la décadence de loyauté (-2 relation/sem) va s'enclencher · Relation: 70 · Budget: 2 750€ | Feedback/Balance Warning: None
-[Season 1 - Week 25] Action: Simuler la semaine | Game Reaction: Course: P35/60, prime +146€ · Relation Kenji Rossi (benché): 68 · Budget: 3 132€ | Feedback/Balance Warning: None
-[Season 1 - Week 26] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 66 · Budget: 3 868€ | Feedback/Balance Warning: None
-[Season 1 - Week 27] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 64 · Budget: 4 604€ | Feedback/Balance Warning: None
-[Season 1 - Week 28] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 62 · Budget: 9 495€ | Feedback/Balance Warning: None
-[Season 1 - Week 29] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 60 · Budget: 10 231€ | Feedback/Balance Warning: None
-[Season 1 - Week 30] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 58 · Progression: A 20.0→33.4 | B 26.5→26.5 · Budget: 9 172€ | Feedback/Balance Warning: None
-[Season 1 - Week 31] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 64 · Budget: 9 908€ | Feedback/Balance Warning: None
-[Season 1 - Week 32] Action: Simuler la semaine | Game Reaction: Événement "Invitation média exclusive" -> option 2 -> L'agence décline poliment l'invitation. · Relation Kenji Rossi (benché): 62 · Budget: 10 644€ | Feedback/Balance Warning: None
-[Season 1 - Week 33] Action: Simuler la semaine | Game Reaction: Course: P40/60, prime +117€ · Relation Kenji Rossi (benché): 60 · Budget: 10 997€ | Feedback/Balance Warning: None
-[Season 1 - Week 34] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 58 · Budget: 11 733€ | Feedback/Balance Warning: None
-[Season 1 - Week 35] Action: Simuler la semaine | Game Reaction: Course: P43/60, prime +100€ · Relation Kenji Rossi (benché): 56 · Budget: 12 069€ | Feedback/Balance Warning: None
-[Season 1 - Week 36] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 54 · Budget: 12 805€ | Feedback/Balance Warning: None
-[Season 1 - Week 37] Action: Simuler la semaine | Game Reaction: Course: P56/60 (abandon), prime +0€ · Relation Kenji Rossi (benché): 46 · Budget: 13 041€ | Feedback/Balance Warning: None
-[Season 1 - Week 38] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 52 · Budget: 13 777€ | Feedback/Balance Warning: None
-[Season 1 - Week 39] Action: Simuler la semaine | Game Reaction: Course: P41/60, prime +111€ · Relation Kenji Rossi (benché): 50 · Budget: 14 124€ | Feedback/Balance Warning: None
-[Season 1 - Week 40] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 48 · Progression: A 20.0→35.5 | B 26.5→26.5 · Budget: 20 182€ | Feedback/Balance Warning: None
-[Season 1 - Week 41] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Relation Kenji Rossi (benché): 46 · Budget: 20 540€ | Feedback/Balance Warning: None
-[Season 1 - Week 42] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 44 · Budget: 21 276€ | Feedback/Balance Warning: None
-[Season 1 - Week 43] Action: Simuler la semaine | Game Reaction: Course: P38/60, prime +128€ · Relation Kenji Rossi (benché): 42 · Budget: 21 640€ | Feedback/Balance Warning: None
-[Season 1 - Week 44] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 40 · Budget: 22 376€ | Feedback/Balance Warning: None
-[Season 1 - Week 45] Action: Simuler la semaine | Game Reaction: Course: P36/60, prime +140€ · Relation Kenji Rossi (benché): 38 · Budget: 25 360€ | Feedback/Balance Warning: None
-[Season 1 - Week 46] Action: Simuler la semaine | Game Reaction: Événement "Dilemme : approche d'une agence rivale" -> option 0 (DILEMME DE DÉBAUCHAGE: rassurer, -2 000€/relation +15) -> Kenji Rossi se sent écouté et reste fidèle à l'agence. · Relation Kenji Rossi (benché): 51 · Budget: 24 096€ | Feedback/Balance Warning: None
-[Season 1 - Week 47] Action: Simuler la semaine | Game Reaction: Course: P40/60, prime +117€ · Relation Kenji Rossi (benché): 49 · Budget: 24 449€ | Feedback/Balance Warning: None
-[Season 1 - Week 48] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 47 · Budget: 25 185€ | Feedback/Balance Warning: None
-[Season 1 - Week 49] Action: Simuler la semaine | Game Reaction: Course: P30/60, prime +178€ · Relation Kenji Rossi (benché): 45 · Budget: 25 599€ | Feedback/Balance Warning: None
-[Season 1 - Week 50] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 43 · Progression: A 20.0→37.8 | B 26.5→26.5 · Budget: 26 335€ | Feedback/Balance Warning: None
-[Season 1 - Week 51] Action: Simuler la semaine | Game Reaction: Course: P36/60, prime +140€ · Relation Kenji Rossi (benché): 41 · Budget: 26 711€ | Feedback/Balance Warning: None
-[Season 1 - Week 52] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 47 · Budget: 27 447€ | Feedback/Balance Warning: None
-[Season 2 - Week 1] Action: TRANSITION FIN DE SAISON : expiration du contrat de courses de Enzo Bianchi | Game Reaction: contract=null ET teamId=null (baquet libéré => benché) MAIS toujours présent dans state.drivers (reste sous l'aile de l'AGENCE) · Budget: 27 320€ | Feedback/Balance Warning: None
-[Season 2 - Week 1] Action: Simuler la semaine | Game Reaction: Course: P25/60, prime +212€ · Relation Kenji Rossi (benché): 45 · Progression: A 20.0→38.5 | B 26.5→26.5 · Budget: 27 320€ | Feedback/Balance Warning: None
-[Season 2 - Week 1] Action: Offre de renégociation à Enzo Bianchi | Game Reaction: REFUSÉE (Enzo Bianchi juge cette offre insuffisante — revois tes conditions.) — relation -5, nouvel essai la semaine prochaine · Budget: 27 320€ | Feedback/Balance Warning: None
-[Season 2 - Week 2] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 43 · Budget: 27 481€ | Feedback/Balance Warning: None
-[Season 2 - Week 2] Action: RENÉGOCIER le contrat d'agence de Enzo Bianchi (salaire 380€, indemnité 12350€, +30% vs base) | Game Reaction: Contrat accepté: 20 courses (jusqu'à fin de saison 2), relation 52 · Budget: 15 131€ | Feedback/Balance Warning: None
-[Season 2 - Week 2] Action: Saison 2 : replacer Enzo Bianchi chez Aurora Racing Team (Karting Senior) | Game Reaction: Baquet payé 7 352€ — le pilote resté sous contrat d'agence retrouve un volant · Budget: 3 779€ | Feedback/Balance Warning: None
-[Season 2 - Week 3] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 41 · Budget: 4 320€ | Feedback/Balance Warning: None
-[Season 2 - Week 4] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 39 · Budget: 4 861€ | Feedback/Balance Warning: None
-[Season 2 - Week 5] Action: Simuler la semaine | Game Reaction: Événement "Dilemme : approche d'une agence rivale" -> option 1 (DILEMME DE DÉBAUCHAGE: rassurer, -2 000€/relation +15) -> L'agence ne réagit pas — Kenji Rossi reste livré à lui-même. · Relation Kenji Rossi (benché): 37 · Budget: 5 402€ | Feedback/Balance Warning: None
-[Season 2 - Week 6] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 35 · Budget: 5 943€ | Feedback/Balance Warning: None
-[Season 2 - Week 7] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 33 · Budget: 6 484€ | Feedback/Balance Warning: None
-[Season 2 - Week 8] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 31 · Budget: 7 025€ | Feedback/Balance Warning: None
-[Season 2 - Week 9] Action: Simuler la semaine | Game Reaction: Événement "Dilemme : approche d'une agence rivale" -> option 1 (DILEMME DE DÉBAUCHAGE: rassurer, -2 000€/relation +15) -> L'agence ne réagit pas — Kenji Rossi reste livré à lui-même. · Course: P41/60, prime +111€ · Relation Kenji Rossi (benché): 29 · Budget: 7 177€ | Feedback/Balance Warning: None
-[Season 2 - Week 10] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 27 · Progression: A 20.0→38.9 | B 26.5→26.5 · Budget: 7 718€ | Feedback/Balance Warning: None
-[Season 2 - Week 11] Action: Simuler la semaine | Game Reaction: Course: P31/60, prime +171€ · Relation Kenji Rossi (benché): 25 · Budget: 7 930€ | Feedback/Balance Warning: None
-[Season 2 - Week 12] Action: Simuler la semaine | Game Reaction: Relation Kenji Rossi (benché): 23 · Budget: 8 471€ | Feedback/Balance Warning: None
-[Season 2 - Week 13] Action: Constat : pilote benché débauché par une agence rivale | Game Reaction: Kenji Rossi parti après décadence de loyauté · Indemnité perçue: 3 676€ · Budget: 11 772€ | Feedback/Balance Warning: None
-[Season 2 - Week 13] Action: Simuler la semaine | Game Reaction: Événement "Dilemme : approche d'une agence rivale" -> option 1 (DILEMME DE DÉBAUCHAGE: rassurer, -2 000€/relation +15) -> L'agence ne réagit pas — Kenji Rossi reste livré à lui-même. · Course: P33/60, prime +159€ · Débauchages rivaux cette semaine: Kenji Rossi · Budget: 11 772€ | Feedback/Balance Warning: None
-[Season 2 - Week 14] Action: Simuler la semaine | Game Reaction: Budget: 19 020€ | Feedback/Balance Warning: None
-[Season 2 - Week 15] Action: Simuler la semaine | Game Reaction: Course: P42/60, prime +106€ · Budget: 18 592€ | Feedback/Balance Warning: None
-[Season 2 - Week 16] Action: Simuler la semaine | Game Reaction: Budget: 18 558€ | Feedback/Balance Warning: None
-[Season 2 - Week 17] Action: Simuler la semaine | Game Reaction: Événement "Négociation salariale" -> option 2 -> Enzo Bianchi est déçu : relation agence -6. · Course: P28/60, prime +191€ · Budget: 18 215€ | Feedback/Balance Warning: None
-[Season 2 - Week 18] Action: Simuler la semaine | Game Reaction: Événement "Invitation média exclusive" -> option 2 -> L'agence décline poliment l'invitation. · Budget: 18 181€ | Feedback/Balance Warning: None
-[Season 2 - Week 19] Action: Simuler la semaine | Game Reaction: Événement "Programme d'entraînement intensif" -> option 1 -> Enzo Bianchi continue son programme habituel. · Course: P41/60, prime +111€ · Budget: 17 758€ | Feedback/Balance Warning: None
-[Season 2 - Week 20] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→40.2 | B 26.5→parti · Budget: 17 724€ | Feedback/Balance Warning: None
-[Season 2 - Week 21] Action: Simuler la semaine | Game Reaction: Événement "Négociation salariale" -> option 2 -> Enzo Bianchi est déçu : relation agence -6. · Course: P38/60, prime +128€ · Budget: 17 318€ | Feedback/Balance Warning: None
-[Season 2 - Week 22] Action: Simuler la semaine | Game Reaction: Budget: 17 284€ | Feedback/Balance Warning: None
-[Season 2 - Week 23] Action: Simuler la semaine | Game Reaction: Course: P36/60, prime +140€ · Budget: 12 416€ | Feedback/Balance Warning: None
-[Season 2 - Week 24] Action: Simuler la semaine | Game Reaction: Budget: 12 382€ | Feedback/Balance Warning: None
-[Season 2 - Week 25] Action: Simuler la semaine | Game Reaction: Course: P33/60, prime +159€ · Budget: 12 007€ | Feedback/Balance Warning: None
-[Season 2 - Week 26] Action: Simuler la semaine | Game Reaction: Budget: 18 028€ | Feedback/Balance Warning: None
-[Season 2 - Week 27] Action: Simuler la semaine | Game Reaction: Budget: 17 994€ | Feedback/Balance Warning: None
-[Season 2 - Week 28] Action: Simuler la semaine | Game Reaction: Budget: 17 960€ | Feedback/Balance Warning: None
-[Season 2 - Week 29] Action: Simuler la semaine | Game Reaction: Budget: 16 772€ | Feedback/Balance Warning: None
-[Season 2 - Week 30] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→40.8 | B 26.5→parti · Budget: 16 738€ | Feedback/Balance Warning: None
-[Season 2 - Week 31] Action: Simuler la semaine | Game Reaction: Événement "Invitation média exclusive" -> option 2 -> L'agence décline poliment l'invitation. · Budget: 16 704€ | Feedback/Balance Warning: None
-[Season 2 - Week 32] Action: Simuler la semaine | Game Reaction: Budget: 16 670€ | Feedback/Balance Warning: None
-[Season 2 - Week 33] Action: Simuler la semaine | Game Reaction: Course: P23/60, prime +226€ · Budget: 16 362€ | Feedback/Balance Warning: None
-[Season 2 - Week 34] Action: Simuler la semaine | Game Reaction: Budget: 22 730€ | Feedback/Balance Warning: None
-[Season 2 - Week 35] Action: Simuler la semaine | Game Reaction: Course: P36/60, prime +140€ · Budget: 19 223€ | Feedback/Balance Warning: None
-[Season 2 - Week 36] Action: Simuler la semaine | Game Reaction: Budget: 19 189€ | Feedback/Balance Warning: None
-[Season 2 - Week 37] Action: Simuler la semaine | Game Reaction: Événement "Programme d'entraînement intensif" -> option 1 -> Enzo Bianchi continue son programme habituel. · Course: P38/60, prime +128€ · Budget: 18 783€ | Feedback/Balance Warning: None
-[Season 2 - Week 38] Action: Simuler la semaine | Game Reaction: Budget: 18 749€ | Feedback/Balance Warning: None
-[Season 2 - Week 39] Action: Simuler la semaine | Game Reaction: Course: P36/60, prime +140€ · Budget: 18 355€ | Feedback/Balance Warning: None
-[Season 2 - Week 40] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→41.3 | B 26.5→parti · Budget: 18 321€ | Feedback/Balance Warning: None
-[Season 2 - Week 41] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Budget: 17 909€ | Feedback/Balance Warning: None
-[Season 2 - Week 42] Action: Simuler la semaine | Game Reaction: Budget: 17 875€ | Feedback/Balance Warning: None
-[Season 2 - Week 43] Action: Simuler la semaine | Game Reaction: Course: P56/60 (abandon), prime +0€ · Budget: 17 341€ | Feedback/Balance Warning: None
-[Season 2 - Week 44] Action: Simuler la semaine | Game Reaction: Budget: 17 307€ | Feedback/Balance Warning: None
-[Season 2 - Week 45] Action: Simuler la semaine | Game Reaction: Événement "Invitation média exclusive" -> option 2 -> L'agence décline poliment l'invitation. · Course: P40/60, prime +117€ · Budget: 16 890€ | Feedback/Balance Warning: None
-[Season 2 - Week 46] Action: Simuler la semaine | Game Reaction: Budget: 16 856€ | Feedback/Balance Warning: None
-[Season 2 - Week 47] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Budget: 16 444€ | Feedback/Balance Warning: None
-[Season 2 - Week 48] Action: Simuler la semaine | Game Reaction: Budget: 16 410€ | Feedback/Balance Warning: None
-[Season 2 - Week 49] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Budget: 15 998€ | Feedback/Balance Warning: None
-[Season 2 - Week 50] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→42.9 | B 26.5→parti · Budget: 15 964€ | Feedback/Balance Warning: None
-[Season 2 - Week 51] Action: Simuler la semaine | Game Reaction: Course: P43/60, prime +100€ · Budget: 15 530€ | Feedback/Balance Warning: None
-[Season 2 - Week 52] Action: Simuler la semaine | Game Reaction: Budget: 15 496€ | Feedback/Balance Warning: None
-[Season 3 - Week 1] Action: Simuler la semaine | Game Reaction: Course: P35/60, prime +146€ · Progression: A 20.0→43.0 | B 26.5→parti · Budget: 14 728€ | Feedback/Balance Warning: None
+[Season 1 - Week 7] Action: Simuler la semaine | Game Reaction: Budget: 7 410€ | Feedback/Balance Warning: None
+[Season 1 - Week 8] Action: Simuler la semaine | Game Reaction: Budget: 7 571€ | Feedback/Balance Warning: None
+[Season 1 - Week 9] Action: Simuler la semaine | Game Reaction: Course: P54/60 (abandon), prime +0€ · Budget: 7 232€ | Feedback/Balance Warning: None
+[Season 1 - Week 10] Action: Simuler la semaine | Game Reaction: Événement "Méforme" -> option 1 -> Tu laisses passer l'orage. · Progression: A 20.0→22.2 | B —→— · Budget: 7 393€ | Feedback/Balance Warning: None
+[Season 1 - Week 11] Action: Simuler la semaine | Game Reaction: Course: P57/60 (abandon), prime +0€ · Budget: 7 054€ | Feedback/Balance Warning: None
+[Season 1 - Week 12] Action: Simuler la semaine | Game Reaction: Budget: 7 215€ | Feedback/Balance Warning: None
+[Season 1 - Week 13] Action: Simuler la semaine | Game Reaction: Course: P50/60, prime +66€ · Budget: 6 942€ | Feedback/Balance Warning: None
+[Season 1 - Week 14] Action: Simuler la semaine | Game Reaction: Budget: 7 103€ | Feedback/Balance Warning: None
+[Season 1 - Week 15] Action: Simuler la semaine | Game Reaction: Course: P32/60, prime +165€ · Budget: 6 929€ | Feedback/Balance Warning: None
+[Season 1 - Week 16] Action: Simuler la semaine | Game Reaction: Événement "Cours de langue" -> option 1 -> Enzo Bianchi se sent bridé dans sa carrière. · Budget: 7 090€ | Feedback/Balance Warning: None
+[Season 1 - Week 17] Action: Simuler la semaine | Game Reaction: Course: P41/60, prime +111€ · Budget: 6 862€ | Feedback/Balance Warning: None
+[Season 1 - Week 18] Action: Simuler la semaine | Game Reaction: Budget: 7 023€ | Feedback/Balance Warning: None
+[Season 1 - Week 19] Action: Simuler la semaine | Game Reaction: Événement "Post polémique sur les réseaux" -> option 1 -> Enzo Bianchi se sent lâché par l'agence. · Course: P53/60, prime +54€ · Budget: 6 738€ | Feedback/Balance Warning: None
+[Season 1 - Week 20] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→30.4 | B —→— · Budget: 6 899€ | Feedback/Balance Warning: None
+[Season 1 - Week 20] Action: SUBVENTION DE TEST +25 000€ (affordance de harnais, hors gameplay) | Game Reaction: Fonds propres insuffisants pour un 2e pilote après 20 semaines — injection pour pouvoir tester la chaîne loyauté/dilemme/débauchage · Budget: 31 899€ | Feedback/Balance Warning: ÉQUILIBRAGE: avec frais amateurs /40 et primes karting faibles, un 2e pilote est infinançable en S1 sur fonds propres — nerf peut-être trop agressif
+[Season 1 - Week 21] Action: Simuler la semaine | Game Reaction: Événement "Tentative de débauchage" -> option 1 -> Enzo Bianchi est vexé de ne pas être retenu : relation en forte baisse. · Course: P39/60, prime +122€ · Budget: 31 682€ | Feedback/Balance Warning: None
+[Season 1 - Week 22] Action: Simuler la semaine | Game Reaction: Budget: 31 843€ | Feedback/Balance Warning: None
+[Season 1 - Week 23] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Budget: 31 626€ | Feedback/Balance Warning: None
+[Season 1 - Week 24] Action: Simuler la semaine | Game Reaction: Budget: 31 787€ | Feedback/Balance Warning: None
+[Season 1 - Week 25] Action: Simuler la semaine | Game Reaction: Course: P54/60 (abandon), prime +0€ · Budget: 31 448€ | Feedback/Balance Warning: None
+[Season 1 - Week 25] Action: SCOUTING APPROFONDI sur Kenji Nilsson (2 500€) | Game Reaction: Potentiel EXACT révélé: 52 (vs fourchettes du scouting normal), cooldown scouting auto: 2 sem · Budget: 28 948€ | Feedback/Balance Warning: None
+[Season 1 - Week 25] Action: Signer Kenji Nilsson et le laisser VOLONTAIREMENT sans baquet | Game Reaction: Contrat agence actif, teamId=null => la décadence de loyauté (-2 relation/sem) va s'enclencher · Relation: 70 · Budget: 5 148€ | Feedback/Balance Warning: None
+[Season 1 - Week 26] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 68 · Budget: 5 904€ | Feedback/Balance Warning: None
+[Season 1 - Week 27] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 66 · Budget: 6 660€ | Feedback/Balance Warning: None
+[Season 1 - Week 28] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 64 · Budget: 4 979€ | Feedback/Balance Warning: None
+[Season 1 - Week 29] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 62 · Budget: 5 735€ | Feedback/Balance Warning: None
+[Season 1 - Week 30] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 60 · Progression: A 20.0→33.3 | B 35.7→35.7 · Budget: 6 491€ | Feedback/Balance Warning: None
+[Season 1 - Week 31] Action: Simuler la semaine | Game Reaction: Événement "Programme d'entraînement intensif" -> option 1 -> Kenji Nilsson continue son programme habituel. · Relation Kenji Nilsson (benché): 58 · Budget: 7 247€ | Feedback/Balance Warning: None
+[Season 1 - Week 32] Action: Simuler la semaine | Game Reaction: Événement "Demande d'une fondation caritative" -> option 1 -> Tu déclines poliment. · Relation Kenji Nilsson (benché): 56 · Budget: 8 003€ | Feedback/Balance Warning: None
+[Season 1 - Week 33] Action: Simuler la semaine | Game Reaction: Course: P40/60, prime +117€ · Relation Kenji Nilsson (benché): 54 · Budget: 8 376€ | Feedback/Balance Warning: None
+[Season 1 - Week 34] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 52 · Budget: 9 132€ | Feedback/Balance Warning: None
+[Season 1 - Week 35] Action: Simuler la semaine | Game Reaction: Course: P43/60, prime +100€ · Relation Kenji Nilsson (benché): 50 · Budget: 9 488€ | Feedback/Balance Warning: None
+[Season 1 - Week 36] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 48 · Budget: 10 244€ | Feedback/Balance Warning: None
+[Season 1 - Week 37] Action: Simuler la semaine | Game Reaction: Événement "Préparateur personnel" -> option 1 -> Kenji Nilsson est déçu du manque d'investissement. · Course: P42/60, prime +106€ · Relation Kenji Nilsson (benché): 40 · Budget: 10 606€ | Feedback/Balance Warning: None
+[Season 1 - Week 38] Action: Simuler la semaine | Game Reaction: Événement "Offre de documentaire" -> option 1 -> Le studio va voir ailleurs, sans conséquence. · Relation Kenji Nilsson (benché): 38 · Budget: 11 362€ | Feedback/Balance Warning: None
+[Season 1 - Week 39] Action: Simuler la semaine | Game Reaction: Événement "Dilemme : approche d'une agence rivale" -> option 0 (DILEMME DE DÉBAUCHAGE: rassurer, -2 000€/relation +15) -> Kenji Nilsson se sent écouté et reste fidèle à l'agence. · Course: P36/60, prime +140€ · Relation Kenji Nilsson (benché): 51 · Budget: 9 758€ | Feedback/Balance Warning: None
+[Season 1 - Week 40] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 49 · Progression: A 20.0→36.7 | B 35.7→35.7 · Budget: 15 836€ | Feedback/Balance Warning: None
+[Season 1 - Week 41] Action: Simuler la semaine | Game Reaction: Course: P38/60, prime +128€ · Relation Kenji Nilsson (benché): 47 · Budget: 16 220€ | Feedback/Balance Warning: None
+[Season 1 - Week 42] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 45 · Budget: 16 976€ | Feedback/Balance Warning: None
+[Season 1 - Week 43] Action: Simuler la semaine | Game Reaction: Course: P37/60, prime +134€ · Relation Kenji Nilsson (benché): 43 · Budget: 17 366€ | Feedback/Balance Warning: None
+[Season 1 - Week 44] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 41 · Budget: 18 122€ | Feedback/Balance Warning: None
+[Season 1 - Week 45] Action: Simuler la semaine | Game Reaction: Course: P34/60, prime +152€ · Relation Kenji Nilsson (benché): 39 · Budget: 18 530€ | Feedback/Balance Warning: None
+[Season 1 - Week 46] Action: Simuler la semaine | Game Reaction: Événement "Dilemme : approche d'une agence rivale" -> option 1 (DILEMME DE DÉBAUCHAGE: rassurer, -2 000€/relation +15) -> L'agence ne réagit pas — Kenji Nilsson reste livré à lui-même. · Relation Kenji Nilsson (benché): 37 · Budget: 19 286€ | Feedback/Balance Warning: None
+[Season 1 - Week 47] Action: Simuler la semaine | Game Reaction: Course: P40/60, prime +117€ · Relation Kenji Nilsson (benché): 35 · Budget: 19 659€ | Feedback/Balance Warning: None
+[Season 1 - Week 48] Action: Simuler la semaine | Game Reaction: Relation Kenji Nilsson (benché): 33 · Budget: 20 415€ | Feedback/Balance Warning: None
+[Season 1 - Week 49] Action: Simuler la semaine | Game Reaction: Course: P28/60, prime +191€ · Relation Kenji Nilsson (benché): 31 · Budget: 20 862€ | Feedback/Balance Warning: None
+[Season 1 - Week 50] Action: Simuler la semaine | Game Reaction: Événement "Dilemme : approche d'une agence rivale" -> option 1 (DILEMME DE DÉBAUCHAGE: rassurer, -2 000€/relation +15) -> L'agence ne réagit pas — Kenji Nilsson reste livré à lui-même. · Relation Kenji Nilsson (benché): 29 · Progression: A 20.0→38.9 | B 35.7→35.7 · Budget: 21 618€ | Feedback/Balance Warning: None
+[Season 1 - Week 51] Action: Simuler la semaine | Game Reaction: Course: P35/60, prime +146€ · Relation Kenji Nilsson (benché): 27 · Budget: 22 020€ | Feedback/Balance Warning: None
+[Season 1 - Week 52] Action: Simuler la semaine | Game Reaction: Événement "Troubles psychologiques" -> option 1 -> Sans accompagnement, Kenji Nilsson régresse légèrement. · Relation Kenji Nilsson (benché): 25 · Budget: 22 776€ | Feedback/Balance Warning: None
+[Season 2 - Week 1] Action: Constat : pilote benché débauché par une agence rivale | Game Reaction: Kenji Nilsson parti après décadence de loyauté · Indemnité perçue: 4 285€ · Budget: 26 312€ | Feedback/Balance Warning: None
+[Season 2 - Week 1] Action: TRANSITION FIN DE SAISON : expiration du contrat de courses de Enzo Bianchi | Game Reaction: contract=null ET teamId=null (baquet libéré => benché) MAIS toujours présent dans state.drivers (reste sous l'aile de l'AGENCE) · Budget: 26 312€ | Feedback/Balance Warning: None
+[Season 2 - Week 1] Action: Simuler la semaine | Game Reaction: Course: P32/60, prime +165€ · Débauchages rivaux cette semaine: Kenji Nilsson · Progression: A 20.0→40.5 | B 35.7→parti · Budget: 26 312€ | Feedback/Balance Warning: None
+[Season 2 - Week 1] Action: Offre de renégociation à Enzo Bianchi | Game Reaction: REFUSÉE (Enzo Bianchi juge cette offre insuffisante — revois tes conditions.) — relation -5, nouvel essai la semaine prochaine · Budget: 26 312€ | Feedback/Balance Warning: None
+[Season 2 - Week 2] Action: Simuler la semaine | Game Reaction: Budget: 25 898€ | Feedback/Balance Warning: None
+[Season 2 - Week 2] Action: RENÉGOCIER le contrat d'agence de Enzo Bianchi (salaire 380€, indemnité 12350€, +30% vs base) | Game Reaction: Contrat accepté: 20 courses (jusqu'à fin de saison 2), relation 48 · Budget: 13 548€ | Feedback/Balance Warning: None
+[Season 2 - Week 2] Action: Saison 2 : replacer Enzo Bianchi chez Aurora Racing Team (Karting Senior) | Game Reaction: Baquet payé 7 495€ — le pilote resté sous contrat d'agence retrouve un volant · Budget: 2 053€ | Feedback/Balance Warning: None
+[Season 2 - Week 3] Action: Simuler la semaine | Game Reaction: Budget: 2 019€ | Feedback/Balance Warning: None
+[Season 2 - Week 4] Action: Simuler la semaine | Game Reaction: Budget: 1 985€ | Feedback/Balance Warning: None
+[Season 2 - Week 5] Action: Simuler la semaine | Game Reaction: Budget: 1 951€ | Feedback/Balance Warning: None
+[Season 2 - Week 6] Action: Simuler la semaine | Game Reaction: Budget: 1 917€ | Feedback/Balance Warning: None
+[Season 2 - Week 7] Action: Simuler la semaine | Game Reaction: Budget: 1 883€ | Feedback/Balance Warning: None
+[Season 2 - Week 8] Action: Simuler la semaine | Game Reaction: Budget: 1 849€ | Feedback/Balance Warning: None
+[Season 2 - Week 9] Action: Simuler la semaine | Game Reaction: Événement "Sponsor controversé" -> option 1 -> Tu refuses proprement, sans vagues. · Course: P44/60, prime +95€ · Budget: 1 410€ | Feedback/Balance Warning: None
+[Season 2 - Week 10] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→40.7 | B 35.7→parti · Budget: 1 376€ | Feedback/Balance Warning: None
+[Season 2 - Week 11] Action: Simuler la semaine | Game Reaction: Course: P39/60, prime +122€ · Budget: 964€ | Feedback/Balance Warning: None
+[Season 2 - Week 12] Action: Simuler la semaine | Game Reaction: Événement "Troubles psychologiques" -> option 1 -> Sans accompagnement, Enzo Bianchi régresse légèrement. · Budget: 930€ | Feedback/Balance Warning: None
+[Season 2 - Week 13] Action: Simuler la semaine | Game Reaction: Événement "Retard à l'entraînement" -> option 1 -> L'écurie voit d'un mauvais œil ce laisser-aller. · Course: P56/60 (abandon), prime +0€ · Budget: 396€ | Feedback/Balance Warning: None
+[Season 2 - Week 14] Action: Simuler la semaine | Game Reaction: Budget: 7 644€ | Feedback/Balance Warning: None
+[Season 2 - Week 15] Action: Simuler la semaine | Game Reaction: Course: P26/60, prime +205€ · Budget: 7 315€ | Feedback/Balance Warning: None
+[Season 2 - Week 16] Action: Simuler la semaine | Game Reaction: Budget: 7 281€ | Feedback/Balance Warning: None
+[Season 2 - Week 17] Action: Simuler la semaine | Game Reaction: Événement "Blessure grave" -> option 1 -> Enzo Bianchi traîne sa blessure : 12 semaines d'absence. · Budget: 7 247€ | Feedback/Balance Warning: None
+[Season 2 - Week 18] Action: Simuler la semaine | Game Reaction: Événement "Paparazzi au bar" -> option 1 -> Enzo Bianchi se sent abandonné dans la tempête médiatique. · Budget: 7 213€ | Feedback/Balance Warning: None
+[Season 2 - Week 19] Action: Simuler la semaine | Game Reaction: Événement "Demande d'une fondation caritative" -> option 1 -> Tu déclines poliment. · Budget: 7 179€ | Feedback/Balance Warning: None
+[Season 2 - Week 20] Action: Simuler la semaine | Game Reaction: Événement "Optimisation fiscale douteuse" -> option 1 -> Tu régularises : coûteux mais sain. · Progression: A 20.0→35.3 | B 35.7→parti · Budget: -855€ | Feedback/Balance Warning: None
+[Season 2 - Week 21] Action: Simuler la semaine | Game Reaction: Événement "Crise personnelle" -> option 1 -> Enzo Bianchi se sent seul face à l'agence. · Budget: -889€ | Feedback/Balance Warning: None
+[Season 2 - Week 22] Action: Simuler la semaine | Game Reaction: Budget: -923€ | Feedback/Balance Warning: None
+[Season 2 - Week 23] Action: Simuler la semaine | Game Reaction: Budget: -957€ | Feedback/Balance Warning: None
+[Season 2 - Week 24] Action: Simuler la semaine | Game Reaction: Budget: -991€ | Feedback/Balance Warning: None
+[Season 2 - Week 25] Action: Simuler la semaine | Game Reaction: Budget: -1 025€ | Feedback/Balance Warning: None
+[Season 2 - Week 26] Action: Simuler la semaine | Game Reaction: Budget: -4 763€ | Feedback/Balance Warning: None
+[Season 2 - Week 27] Action: Simuler la semaine | Game Reaction: Budget: -4 797€ | Feedback/Balance Warning: None
+[Season 2 - Week 28] Action: Simuler la semaine | Game Reaction: Budget: -4 831€ | Feedback/Balance Warning: None
+[Season 2 - Week 29] Action: Simuler la semaine | Game Reaction: Budget: -4 865€ | Feedback/Balance Warning: None
+[Season 2 - Week 30] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→35.3 | B 35.7→parti · Budget: -4 899€ | Feedback/Balance Warning: None
+[Season 2 - Week 31] Action: Simuler la semaine | Game Reaction: Événement "Tuyau d'investissement" -> option 1 -> Tu passes ton tour. · Budget: -4 933€ | Feedback/Balance Warning: None
+[Season 2 - Week 32] Action: Simuler la semaine | Game Reaction: Budget: -4 967€ | Feedback/Balance Warning: None
+[Season 2 - Week 33] Action: Simuler la semaine | Game Reaction: Course: P46/60, prime +85€ · Budget: -4 916€ | Feedback/Balance Warning: None
+[Season 2 - Week 34] Action: Simuler la semaine | Game Reaction: Budget: -4 950€ | Feedback/Balance Warning: None
+[Season 2 - Week 35] Action: Simuler la semaine | Game Reaction: Course: P34/60, prime +152€ · Budget: -4 832€ | Feedback/Balance Warning: None
+[Season 2 - Week 36] Action: Simuler la semaine | Game Reaction: Budget: -4 866€ | Feedback/Balance Warning: None
+[Season 2 - Week 37] Action: Simuler la semaine | Game Reaction: Événement "Retard à l'entraînement" -> option 1 -> L'écurie voit d'un mauvais œil ce laisser-aller. · Course: P34/60, prime +152€ · Budget: -4 748€ | Feedback/Balance Warning: None
+[Season 2 - Week 38] Action: Simuler la semaine | Game Reaction: Budget: -4 782€ | Feedback/Balance Warning: None
+[Season 2 - Week 39] Action: Simuler la semaine | Game Reaction: Événement "Méforme" -> option 1 -> Tu laisses passer l'orage. · Course: P41/60, prime +111€ · Budget: -4 705€ | Feedback/Balance Warning: None
+[Season 2 - Week 40] Action: Simuler la semaine | Game Reaction: Événement "Stage d'équipe spécial" -> option 1 -> L'écurie prend mal ce refus. · Progression: A 20.0→37.4 | B 35.7→parti · Budget: -4 739€ | Feedback/Balance Warning: None
+[Season 2 - Week 41] Action: Simuler la semaine | Game Reaction: Événement "Négociation salariale" -> option 2 -> Enzo Bianchi est déçu : relation agence -6. · Course: P32/60, prime +165€ · Budget: -4 608€ | Feedback/Balance Warning: None
+[Season 2 - Week 42] Action: Simuler la semaine | Game Reaction: Budget: -4 642€ | Feedback/Balance Warning: None
+[Season 2 - Week 43] Action: Simuler la semaine | Game Reaction: Course: P32/60, prime +165€ · Budget: -4 511€ | Feedback/Balance Warning: None
+[Season 2 - Week 44] Action: Simuler la semaine | Game Reaction: Événement "Invitation média exclusive" -> option 2 -> L'agence décline poliment l'invitation. · Budget: -4 545€ | Feedback/Balance Warning: None
+[Season 2 - Week 45] Action: Simuler la semaine | Game Reaction: Événement "Demande de prêt" -> option 1 -> Enzo Bianchi encaisse mal le refus. · Course: P36/60, prime +140€ · Budget: -4 439€ | Feedback/Balance Warning: None
+[Season 2 - Week 46] Action: Simuler la semaine | Game Reaction: Budget: -4 473€ | Feedback/Balance Warning: None
+[Season 2 - Week 47] Action: Simuler la semaine | Game Reaction: Course: P56/60 (abandon), prime +0€ · Budget: -4 507€ | Feedback/Balance Warning: None
+[Season 2 - Week 48] Action: Simuler la semaine | Game Reaction: Budget: -4 541€ | Feedback/Balance Warning: None
+[Season 2 - Week 49] Action: Simuler la semaine | Game Reaction: Course: P31/60, prime +171€ · Budget: -4 404€ | Feedback/Balance Warning: None
+[Season 2 - Week 50] Action: Simuler la semaine | Game Reaction: Progression: A 20.0→39.4 | B 35.7→parti · Budget: -4 438€ | Feedback/Balance Warning: None
+[Season 2 - Week 51] Action: Simuler la semaine | Game Reaction: Course: P37/60, prime +134€ · Budget: -4 338€ | Feedback/Balance Warning: None
+[Season 2 - Week 52] Action: Simuler la semaine | Game Reaction: Budget: -4 372€ | Feedback/Balance Warning: None
+[Season 3 - Week 1] Action: Simuler la semaine | Game Reaction: Course: P35/60, prime +146€ · Progression: A 20.0→39.8 | B 35.7→parti · Budget: -4 260€ | Feedback/Balance Warning: None
 
 === RÉSUMÉ DU STRESS TEST (2 SAISONS / 104 SEMAINES) ===
 Stabilité: aucun crash sur 104 semaines
-Économie: budget final 14 728€, minimum atteint 3 132€, semaines dans le rouge: 0 — faillite: NON
-Dilemmes de débauchage résolus: 4 · Pilote benché débauché: oui (mécanique complète loyauté→débauchage validée)
+Économie: budget final -4 260€, minimum atteint -4 967€, semaines dans le rouge: 34 — faillite: NON
+Dilemmes de débauchage résolus: 3 · Pilote benché débauché: oui (mécanique complète loyauté→débauchage validée)
 Transition S1→S2: expiration contrat=true, renégociation agence=true, nouveau baquet trouvé=true, pilote resté à l'agence=true
-Progression (échantillons aux semaines 1/10/20/...): A: 22.2 → 30.4 → 33.4 → 35.5 → 37.8 → 38.5 → 38.9 → 40.2 → 40.8 → 41.3 → 42.9 → 43.0 | B: — → — → 26.5 → 26.5 → 26.5 → 26.5 → 26.5 → parti → parti → parti → parti → parti
-Stockage/Mémoire: état 486KB → 507KB (fin S1) → 512KB (fin S2) · transactions 0→200 · financeHistory 0→52 · heap Node 7MB→8MB
+Progression (échantillons aux semaines 1/10/20/...): A: 22.2 → 30.4 → 33.3 → 36.7 → 38.9 → 40.5 → 40.7 → 35.3 → 35.3 → 37.4 → 39.4 → 39.8 | B: — → — → 35.7 → 35.7 → 35.7 → parti → parti → parti → parti → parti → parti → parti
+Stockage/Mémoire: état 489KB → 508KB (fin S1) → 513KB (fin S2) · transactions 0→200 · financeHistory 0→52 · heap Node 7MB→10MB
 
 Avertissements collectés (1):
  - S1W20: ÉQUILIBRAGE: avec frais amateurs /40 et primes karting faibles, un 2e pilote est infinançable en S1 sur fonds propres — nerf peut-être trop agressif

@@ -123,7 +123,7 @@ function tryWeeklyActions() {
         aRatingAtSign = overallRating(driverA);
         log(
           `Signer ${driverA.name} sous contrat d'AGENCE`,
-          `Contrat agence: ${driverA.contract.racesRemaining} courses, ${driverA.contract.weeklyWage}€/sem (amateur => l'agence PERÇOIT ces frais), teamId=null (pas encore de baquet — contrat agence ≠ baquet équipe) · Budget: ${money()}`
+          `Contrat agence: ${driverA.contract.weeksRemaining} semaines, ${driverA.contract.weeklyWage}€/sem (amateur => l'agence PERÇOIT ces frais), teamId=null (pas encore de baquet — contrat agence ≠ baquet équipe) · Budget: ${money()}`
         );
       } else {
         log(`Tentative de signature de ${candidate.name}`, `Refusée: ${res.error} · Budget: ${money()}`, "Signature impossible — budget de départ trop serré pour le coût de signature");
@@ -199,7 +199,7 @@ function tryWeeklyActions() {
         aRenegotiated = true;
         log(
           `RENÉGOCIER le contrat d'agence de ${driverA.name} (salaire ${offer.weeklyWage}€, indemnité ${offer.transferFee}€, +30% vs base)`,
-          `Contrat accepté: ${driverA.contract.racesRemaining} courses (jusqu'à fin de saison 2), relation ${Math.round(driverA.agencyRelationship)} · Budget: ${money()}`
+          `Contrat accepté: ${driverA.contract.weeksRemaining} semaines restantes, relation ${Math.round(driverA.agencyRelationship)} · Budget: ${money()}`
         );
       } else {
         log(`Offre de renégociation à ${driverA.name}`, `REFUSÉE (${res.error}) — relation -5, nouvel essai la semaine prochaine · Budget: ${money()}`);
@@ -270,9 +270,8 @@ try {
     if (driverA && state.drivers.includes(driverA) && aContractBefore && !driverA.contract && !aContractExpiredLogged) {
       aContractExpiredLogged = true;
       log(
-        "TRANSITION FIN DE SAISON : expiration du contrat de courses de " + driverA.name,
-        `contract=null ET teamId=${driverA.teamId} (baquet libéré => benché) MAIS toujours présent dans state.drivers (reste sous l'aile de l'AGENCE) · Budget: ${money()}`,
-        driverA.teamId != null ? "BUG: le baquet n'a pas été libéré à l'expiration" : null
+        "EXPIRATION DU CONTRAT D'AGENCE de " + driverA.name,
+        `contract=null, teamId=${driverA.teamId} (le baquet écurie est désormais indépendant — il n'expire qu'au rollover de fin de saison, pas ici) MAIS le pilote reste dans state.drivers (reste sous l'aile de l'AGENCE) · Budget: ${money()}`
       );
     }
 

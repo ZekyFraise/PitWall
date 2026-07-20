@@ -5,7 +5,9 @@ export const NAV = [
   { id: "talents", label: "Talents" },
   { id: "staff", label: "Staff" },
   { id: "finances", label: "Finances" },
+  { id: "investissement", label: "Investissement" },
   { id: "nouveautes", label: "Nouveautés" },
+  { id: "resultats", label: "Résultats" },
   {
     id: "monde",
     label: "Monde",
@@ -34,8 +36,12 @@ function isMondeActive(state) {
   return state.ui.activeMenu.startsWith("monde-");
 }
 
+function navItems(state) {
+  return state.ui.devMode ? [...NAV, { id: "dev", label: "Développeur" }] : NAV;
+}
+
 function renderNav(state) {
-  return NAV.map((item) => {
+  return navItems(state).map((item) => {
     if (item.children) {
       const expanded = state.ui.mondeExpanded || isMondeActive(state);
       const childrenHtml = item.children
@@ -75,7 +81,7 @@ function renderTopbar(state) {
         <div><span class="muted">Semaine</span><br/><b>${currentWeek}/${SEASON_WEEKS} · An ${year}</b></div>
         <div><span class="muted">Réputation</span><br/><b>${state.agency.reputation}</b></div>
       </div>
-      <button data-action="simulate" class="primary">Continuer →</button>
+      <button data-action="simulate" class="btn-green">Continuer →</button>
     </div>
     <div class="topbar-phase muted">${weekPhaseLabel(currentWeek)}</div>`;
 }
@@ -87,6 +93,7 @@ function renderSidebar(state) {
       <div class="sidebar-utility">
         <button data-action="save" class="secondary small">Sauvegarder</button>
         <button data-action="main-menu" class="secondary small">Menu principal</button>
+        <button data-action="toggle-dev-mode" class="secondary small">Mode dev : ${state.ui.devMode ? "ON" : "OFF"}</button>
       </div>
     </nav>`;
 }

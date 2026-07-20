@@ -26,7 +26,8 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 h2 {
@@ -45,8 +46,7 @@ h2 {
   color: var(--muted);
 }
 
-/* DEBUG: remove .debug-id along with its markup once the feature is no longer needed. */
-.debug-id {
+.id-tag {
   color: var(--muted);
   font-family: monospace;
   font-size: 0.75em;
@@ -127,6 +127,7 @@ h2 {
   flex-direction: column;
   justify-content: space-between;
   padding: 1rem 0;
+  overflow-y: auto;
 }
 
 .nav-list {
@@ -187,6 +188,13 @@ button.small {
   font-size: 0.78rem;
 }
 
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
 .content {
   padding: 1.5rem;
   overflow-y: auto;
@@ -231,6 +239,18 @@ th.sortable {
   cursor: pointer;
   user-select: none;
 }
+
+.identity-line {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--text);
+  margin-top: 0.3rem;
+  line-height: 1.5;
+}
+
+.rel-good { color: var(--good); font-weight: 600; }
+.rel-mid { color: var(--accent-2); font-weight: 600; }
+.rel-bad { color: var(--danger); font-weight: 600; }
 
 th.sortable.active {
   color: var(--agency-color, #ffb020);
@@ -380,6 +400,25 @@ button.secondary {
   opacity: 0.7;
 }
 
+button.btn-green {
+  background: var(--good);
+  border-color: var(--good);
+  color: #06210f;
+  font-weight: 600;
+}
+
+button.btn-red {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
+  font-weight: 600;
+}
+
+button.btn-large {
+  padding: 0.7rem 1.3rem;
+  font-size: 0.95rem;
+}
+
 select, input[type="number"] {
   background: var(--panel);
   color: var(--text);
@@ -429,6 +468,18 @@ select, input[type="number"] {
 
 .invest-line input {
   width: 100px;
+}
+
+.invest-line-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.invest-line-row .invest-line {
+  margin-top: 0;
 }
 
 .propose-box {
@@ -503,9 +554,93 @@ select, input[type="number"] {
   padding: 0.35rem 0.7rem;
 }
 
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-bottom: 1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.filter-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.filter-row input {
+  width: 90px;
+}
+
 .tab.active {
   border-color: var(--accent);
   color: var(--agency-color, #ffb020);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.compare-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 1rem;
+}
+
+/* One column per driver: 2 → 2 columns (unchanged), 3 → 3 columns, 4 → 4 columns. */
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.compare-grid.count-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.compare-grid.count-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.compare-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+/* A single driver's own detail page shows attribute groups 2-per-row, but every
+   comparison view (2, 3, or 4 drivers) stacks Technique/Mental/Physique/Discipline
+   vertically in each column so groups stay readable regardless of column count. */
+.compare-grid .compare-column .attributes-card {
+  grid-template-columns: 1fr;
+}
+
+.compare-push-right {
+  margin-left: auto;
+}
+
+.align-right {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+  .compare-grid,
+  .compare-grid.count-3,
+  .compare-grid.count-4 {
+    grid-template-columns: 1fr;
+  }
 }
 
 .standings-grid {
@@ -660,6 +795,20 @@ h3 {
   white-space: nowrap;
 }
 
+.chart-x-labels {
+  position: relative;
+  height: 16px;
+  margin: 4px 12px 0 56px;
+}
+
+.chart-x-label {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 0.68rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .chart-hlines {
   position: absolute;
   left: 0;
@@ -781,7 +930,7 @@ h3 {
 
 .toast-container {
   position: fixed;
-  top: 1rem;
+  bottom: 1rem;
   right: 1rem;
   z-index: 1000;
   display: flex;
@@ -810,6 +959,10 @@ h3 {
 
 .toast-info {
   border-color: var(--border);
+}
+
+.toast-success {
+  border-color: var(--good);
 }
 
 .modal-overlay {
@@ -855,6 +1008,9 @@ h3 {
   font-size: 0.75rem;
   font-weight: 400;
   opacity: 0.85;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
 }
 
 .title-screen {

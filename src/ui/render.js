@@ -1,6 +1,18 @@
 import { renderShell } from "./layout.js";
-import { renderMyDrivers, renderDriverDetail, renderStaff, renderTalents, renderFinances, renderNews } from "./views/agency.js";
+import {
+  renderMyDrivers,
+  renderDriverDetail,
+  renderStaff,
+  renderTalents,
+  renderFinances,
+  renderInvestments,
+  renderNews,
+  renderResults,
+  renderCompareDrivers,
+  renderCompareStaff,
+} from "./views/agency.js";
 import { renderWorldDrivers, renderWorldChampionships, renderWorldTeams, renderWorldStaff } from "./views/world.js";
+import { renderDev } from "./views/dev.js";
 
 const VIEWS = {
   "mes-pilotes": renderMyDrivers,
@@ -8,11 +20,16 @@ const VIEWS = {
   staff: renderStaff,
   talents: renderTalents,
   finances: renderFinances,
+  investissement: renderInvestments,
   nouveautes: renderNews,
+  resultats: renderResults,
+  "compare-drivers": renderCompareDrivers,
+  "compare-staff": renderCompareStaff,
   "monde-pilotes": renderWorldDrivers,
   "monde-championnats": renderWorldChampionships,
   "monde-ecuries": renderWorldTeams,
   "monde-staff": renderWorldStaff,
+  dev: renderDev,
 };
 
 export function renderApp(state) {

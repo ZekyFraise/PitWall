@@ -66,16 +66,19 @@ export const SHOP_ITEMS = [
   },
 ];
 
-export function purchaseShopItem(state, itemId) {
+export function purchaseShopItem(state, itemId, { force = false } = {}) {
   const item = SHOP_ITEMS.find((i) => i.id === itemId);
   if (!item) return { ok: false, error: "Objet introuvable." };
   if (item.type === "multiplier" && state.purchasedUpgrades.includes(itemId)) {
     return { ok: false, error: "Déjà acheté." };
   }
-  if (state.agency.money < item.cost) return { ok: false, error: "Budget insuffisant." };
+  const cost = force ? 0 : item.cost;
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
 
-  state.agency.money -= item.cost;
-  recordTransaction(state, "shop-purchase", `Achat — ${item.name}`, -item.cost);
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "shop-purchase", `Achat — ${item.name}`, -cost);
+  }
   if (item.type === "flat") {
     state.agency.reputation += item.reputationBonus;
   } else {
@@ -101,12 +104,15 @@ export function nextFacilityLevelData(state, facilityId) {
   return FACILITIES[facilityId].levels[level] ?? null;
 }
 
-export function upgradeFacility(state, facilityId) {
+export function upgradeFacility(state, facilityId, { force = false } = {}) {
   const next = nextFacilityLevelData(state, facilityId);
   if (!next) return false;
-  if (state.agency.money < next.upgradeCost) return false;
-  state.agency.money -= next.upgradeCost;
-  recordTransaction(state, "facility-upgrade", `${FACILITIES[facilityId].name} niveau ${state.infrastructure[facilityId] + 1}`, -next.upgradeCost);
+  const cost = force ? 0 : next.upgradeCost;
+  if (!force && state.agency.money < cost) return false;
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "facility-upgrade", `${FACILITIES[facilityId].name} niveau ${state.infrastructure[facilityId] + 1}`, -cost);
+  }
   state.infrastructure[facilityId] += 1;
   return true;
 }

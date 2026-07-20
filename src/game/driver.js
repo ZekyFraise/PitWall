@@ -1,4 +1,4 @@
-import { randomName, CATEGORY_BY_ID } from "./data.js";
+import { randomName, CATEGORY_BY_ID, PRO_TIER_THRESHOLD } from "./data.js";
 
 let nextId = 1;
 
@@ -56,9 +56,18 @@ export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 }
   const potential = clamp(40 + scoutSkill * 0.15 + rng() * 60, 40, 99);
   const age = Math.floor(minAge + rng() * (maxAge - minAge + 1));
   const startingGap = clamp(25 - scoutSkill * 0.15 + rng() * 20, 5, 45);
+  // Bounding the center before applying the swing keeps the swing a genuine spread rather
+  // than a floor-collapse: for a low-potential driver, potential - startingGap can sit near
+  // 0, and a ±25 swing on top of that pinned most of their attributes at the 20 floor instead
+  // of actually varying.
+  const attributeCenter = clamp(potential - startingGap, 30, 85);
   const attributes = {};
   for (const key of Object.keys(ATTRIBUTE_META)) {
-    attributes[key] = clamp(potential - startingGap + rng() * 10, 20, 95);
+    // Wide per-attribute swing so a driver's individual characteristics can differ sharply
+    // from one another (a weak Freinage next to a strong Pilotage), not just cluster tightly
+    // around the same base level — this is what makes scouting individual traits meaningful.
+    const swing = (rng() * 2 - 1) * 20;
+    attributes[key] = clamp(attributeCenter + swing, 20, 95);
   }
   return {
     id: nextId++,
@@ -82,6 +91,8 @@ export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 }
     benchedWeeks: 0,
     agencyRelationship: 70,
     teamRelationship: 60,
+    negotiationPatience: 100,
+    form: 50,
     careerResults: [],
     seasonHistory: [],
     pendingOffers: [],
@@ -158,6 +169,14 @@ export function overallRating(driver) {
 
 export function reliability(driver) {
   return (driver.attributes.sangFroid + driver.attributes.concentration + driver.attributes.rigueur) / 3;
+}
+
+// F3 (tier PRO_TIER_THRESHOLD - 1) runs Amateur economics (isPro false) but is displayed as
+// its own "Semi-Pro" tier rather than lumped in with karting/F4's plain "Amateur" label.
+export function driverStatusLabel(driver, category) {
+  if (driver.isPro) return "Pro";
+  if (category?.tier === PRO_TIER_THRESHOLD - 1) return "Semi-Pro";
+  return "Amateur";
 }
 
 export function peakAge(driver) {

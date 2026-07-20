@@ -1,0 +1,6 @@
+cd "D:\Claude Code\PitWall"
+git add .
+git commit -m "WHAT'S NEW?"
+git push
+
+Si erreur : git push --set-upstream origin main

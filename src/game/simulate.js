@@ -1,11 +1,11 @@
 import { CATEGORIES, CATEGORY_BY_ID, PRO_COMMISSION_RATE, weekInSeason } from "./data.js";
 import { overallRating, growDriver, getDriverById, reliability } from "./driver.js";
-import { findTeamById, generateAIDriver, usedDriverNumbersInCategory, releaseSeatAndBackfill } from "./team.js";
-import { refillScoutPool } from "./state.js";
+import { findTeamById, generateAIDriver, usedDriverNumbersInCategory } from "./team.js";
+import { refillScoutPool, repayLoan } from "./state.js";
 import { tickScoutPoolPoaching, tickFreeAgentPoaching, tickBenchedDriverDecay, bumpRivalReputation } from "./rivals.js";
 import { applyPoints, rolloverIfNeeded } from "./standings.js";
 import { autoRevealCandidates, refillStaffPool, bestSkill } from "./staff.js";
-import { trainingGrowthMultiplier, totalUpkeep, reputationMultiplier } from "./infrastructure.js";
+import { trainingGrowthMultiplier, totalUpkeep } from "./infrastructure.js";
 import { recordTransaction, recordBalanceSnapshot } from "./finance.js";
 import { triggerRandomEvent, resolveEventChoice } from "./events.js";
 
@@ -40,6 +40,17 @@ function resultReputationDelta(position, gridSize) {
   if (position <= 6) return 1;
   if (position > gridSize * 0.75) return -1;
   return 0;
+}
+
+// Judges relationship proportionally to how many drivers were actually engaged — a top-6 out
+// of 60 (karting) isn't the same feat as a top-6 out of 16 (WRC). DNF counts as last place.
+function raceRelationshipDelta(position, gridSize, dnf) {
+  const ratio = dnf ? 1 : position / Math.max(1, gridSize);
+  if (ratio <= 0.1) return 3;
+  if (ratio <= 0.3) return 2;
+  if (ratio <= 0.6) return 1;
+  if (ratio <= 0.85) return 0;
+  return -2;
 }
 
 function prizeForPosition(category, position, gridSize) {
@@ -125,7 +136,10 @@ function simulateClassRace(state, category, teams, classId, rng) {
     const crewReliability = crewAverage(e.drivers, reliability);
     const dnf = rng() < dnfChance(crewReliability, reduction);
     const crewRating = crewAverage(e.drivers, overallRating);
-    const score = dnf ? -Infinity : participantScore(crewRating, crewReliability, e.team, category, e.investment, rng);
+    // Form (0-100, neutral at 50) nudges race pace by up to ±4 points — a minor factor
+    // next to the ~18-point noise spread, so it colours results without dominating them.
+    const formBonus = (crewAverage(e.drivers, (d) => d.form ?? 50) - 50) / 50 * 4;
+    const score = dnf ? -Infinity : participantScore(crewRating, crewReliability, e.team, category, e.investment, rng) + formBonus;
     return { ...e, dnf, score };
   });
   scored.sort((a, b) => b.score - a.score);
@@ -157,40 +171,29 @@ function simulateClassRace(state, category, teams, classId, rng) {
       driver.age += rng() < 0.02 ? 1 : 0;
 
       if (e.isPlayer && state.drivers.some((d) => d.id === driver.id)) {
-        const scaledRepDelta = repDelta > 0 ? Math.round(repDelta * reputationMultiplier(state)) : repDelta;
-        state.agency.reputation = Math.max(0, state.agency.reputation + scaledRepDelta);
-        const relationshipDelta = e.dnf ? -2 : position === 1 ? 2 : position <= 3 ? 1 : 0;
+        const relationshipDelta = raceRelationshipDelta(position, gridSize, e.dnf);
         driver.agencyRelationship = clamp(
           driver.agencyRelationship + applyMentalProtection(relationshipDelta, mentalProtection),
           0,
           200
         );
+        const teamDelta = relationshipDelta < 0 ? Math.ceil(relationshipDelta / 2) : relationshipDelta;
         driver.teamRelationship = clamp(
-          driver.teamRelationship + applyMentalProtection(e.dnf ? -1 : relationshipDelta, mentalProtection),
+          driver.teamRelationship + applyMentalProtection(teamDelta, mentalProtection),
           0,
           200
         );
         const grossPrize = e.dnf ? 0 : prizeForPosition(category, position, gridSize);
-        const prize = driver.isPro ? Math.round(grossPrize * PRO_COMMISSION_RATE) : grossPrize;
+        const commissionRate = driver.contract?.commissionRate ?? PRO_COMMISSION_RATE;
+        const prize = driver.isPro ? Math.round(grossPrize * commissionRate) : grossPrize;
         state.agency.money += prize;
         if (prize > 0) recordTransaction(state, "race-prize", `${driver.name} — ${category.name}`, prize);
-        if (driver.contract) {
-          driver.contract.racesRemaining -= 1;
-          if (driver.contract.racesRemaining <= 0) {
-            // TEAM contract expiry: the seat is vacated (driver becomes benched), but the
-            // driver stays in the player's agency roster — a separate, AGENCY-level contract
-            // concern (renewed via the contract negotiation screen), not an agency departure.
-            driver.contract = null;
-            releaseSeatAndBackfill(state, driver.id, rng);
-            driver.teamId = null;
-          }
-        }
         driver.careerResults.push({
           week: state.week,
           categoryId: category.id,
+          teamId: e.team.id,
           position,
           prize,
-          reputation: scaledRepDelta,
           dnf: e.dnf,
         });
         logEntries.push({
@@ -198,7 +201,7 @@ function simulateClassRace(state, category, teams, classId, rng) {
           driver,
           category,
           team: e.team,
-          result: { position, prize, reputation: scaledRepDelta, dnf: e.dnf, gridSize },
+          result: { position, prize, dnf: e.dnf, gridSize },
         });
       } else if (driver.agencyId) {
         bumpRivalReputation(state, driver.agencyId, repDelta);
@@ -285,6 +288,14 @@ function runWeekBody(state, rng) {
 
   for (const driver of state.drivers) {
     if (driver.injuryWeeksRemaining > 0) driver.injuryWeeksRemaining -= 1;
+    driver.negotiationPatience = Math.min(100, (driver.negotiationPatience ?? 100) + 3);
+    // Agency contract duration is now in WEEKS, decremented unconditionally every week —
+    // races missed to injury/benching still count against it, unlike the old per-race
+    // decrement that only fired for drivers who actually raced.
+    if (driver.contract) {
+      driver.contract.weeksRemaining -= 1;
+      if (driver.contract.weeksRemaining <= 0) driver.contract = null;
+    }
   }
 
   const currentWeekInSeason = weekInSeason(state.week);
@@ -295,20 +306,15 @@ function runWeekBody(state, rng) {
   }
   restoreBenchedSeats(state, benched);
 
-  let driverWageTotal = 0;
+  // Pros no longer draw a weekly wage from the agency — the agency now acts as their agent,
+  // earning a negotiated commission on race prizes instead (see the race-prize cut above).
   let amateurFeeTotal = 0;
   for (const driver of state.drivers) {
-    if (driver.contract) {
-      if (driver.isPro) {
-        driverWageTotal += driver.contract.weeklyWage;
-        state.agency.money -= driver.contract.weeklyWage;
-      } else {
-        amateurFeeTotal += driver.contract.weeklyWage;
-        state.agency.money += driver.contract.weeklyWage;
-      }
+    if (driver.contract && !driver.isPro) {
+      amateurFeeTotal += driver.contract.weeklyWage;
+      state.agency.money += driver.contract.weeklyWage;
     }
   }
-  if (driverWageTotal > 0) recordTransaction(state, "driver-wage", "Salaires pilotes pro", -driverWageTotal);
   if (amateurFeeTotal > 0) recordTransaction(state, "amateur-fee", "Frais de gestion (amateurs)", amateurFeeTotal);
 
   let staffWageTotal = 0;
@@ -321,6 +327,8 @@ function runWeekBody(state, rng) {
   const upkeep = totalUpkeep(state);
   state.agency.money -= upkeep;
   if (upkeep > 0) recordTransaction(state, "infrastructure-upkeep", "Entretien infrastructures", -upkeep);
+
+  repayLoan(state);
 
   recordBalanceSnapshot(state);
 

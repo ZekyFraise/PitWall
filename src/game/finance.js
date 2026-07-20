@@ -4,7 +4,6 @@ const MAX_FINANCE_HISTORY = 52;
 export const TRANSACTION_LABELS = {
   "race-prize": "Primes de course",
   "season-title-bonus": "Prime de titre",
-  "driver-wage": "Salaires pilotes pro",
   "amateur-fee": "Frais de gestion (amateurs)",
   "pro-commission": "Commissions passage pro",
   "random-event": "Événements",
@@ -21,6 +20,10 @@ export const TRANSACTION_LABELS = {
   "approach-driver": "Recrutement pilotes établis",
   "shop-purchase": "Achats agence",
   "poach-buyout": "Indemnités de départ",
+  "driver-release": "Résiliations de contrat",
+  "dev-tool": "Outils développeur",
+  loan: "Prêt",
+  "loan-repayment": "Remboursement de prêt",
 };
 
 export function recordTransaction(state, type, label, amount) {
@@ -38,21 +41,26 @@ export function recordBalanceSnapshot(state) {
   }
 }
 
-export function weeklyTotals(state, weeks = 10) {
+// Buckets transactions into fixed-size week ranges (1 = weekly columns, 4 = monthly,
+// SEASON_WEEKS = yearly) so the finance bar chart can show whichever granularity the player
+// picks instead of always one column per week.
+export function aggregatedTotals(state, windowWeeks, bucketWeeks = 1) {
   const currentWeek = state.week;
-  const startWeek = Math.max(1, currentWeek - weeks + 1);
-  const totals = [];
-  for (let w = startWeek; w <= currentWeek; w++) {
-    totals.push({ week: w, income: 0, expenses: 0 });
-  }
-  const byWeek = new Map(totals.map((t) => [t.week, t]));
+  const startWeek = Math.max(1, currentWeek - windowWeeks + 1);
+  const bucketCount = Math.max(1, Math.ceil((currentWeek - startWeek + 1) / bucketWeeks));
+  const buckets = Array.from({ length: bucketCount }, (_, i) => {
+    const bucketStart = startWeek + i * bucketWeeks;
+    const bucketEnd = Math.min(currentWeek, bucketStart + bucketWeeks - 1);
+    return { startWeek: bucketStart, endWeek: bucketEnd, income: 0, expenses: 0 };
+  });
   for (const tx of state.transactions) {
-    const bucket = byWeek.get(tx.week);
+    if (tx.week < startWeek || tx.week > currentWeek) continue;
+    const bucket = buckets[Math.floor((tx.week - startWeek) / bucketWeeks)];
     if (!bucket) continue;
     if (tx.amount > 0) bucket.income += tx.amount;
     else bucket.expenses += -tx.amount;
   }
-  return totals;
+  return buckets;
 }
 
 export function breakdownByType(state, weeks = 10) {

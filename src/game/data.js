@@ -166,9 +166,21 @@ export const MAX_DRIVER_WORKLOAD = 30;
 
 export const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]));
 
+// One distinct icon per category so it's recognizable at a glance in dense tables — the
+// single-seater ladder (karting → f1) reads as a progression, WEC/rally get their own icons.
+export const CATEGORY_EMOJI = {
+  karting: "🏎️",
+  f4: "🔰",
+  f3: "🥉",
+  f2: "🥈",
+  f1: "🏆",
+  wec: "⏱️",
+  rally: "🌲",
+};
+
 export const FIELD_STRENGTH_BY_TIER = { 0: 32, 1: 48, 2: 60, 3: 72, 4: 88 };
 
-export const PRO_TIER_THRESHOLD = 2;
+export const PRO_TIER_THRESHOLD = 3;
 export const PRO_COMMISSION_RATE = 0.25;
 
 export const RIVAL_AGENCIES = [
