@@ -110,12 +110,22 @@ function tryWeeklyActions() {
   if (!driverA) {
     const candidate = state.scoutPool[0];
     if (candidate && staffHired) {
-      scoutDriver(state, candidate.id);
+      const scoutedNow = scoutDriver(state, candidate.id);
       const reveal = candidate.scoutReveal;
+      const revealedKeys = reveal ? Object.keys(reveal.attributeWidths) : [];
+      const avgWidth = revealedKeys.length
+        ? Math.round(revealedKeys.reduce((sum, key) => sum + reveal.attributeWidths[key], 0) / revealedKeys.length)
+        : 0;
       log(
         `Scouting normal sur ${candidate.name} (500€)`,
-        `Groupes révélés: [${reveal.groups.join(", ")}], largeur de fourchette ±${Math.round(reveal.rangeWidth / 2)} (potentiel affiché: "?") · Budget: ${money()}`,
-        reveal.groups.length === 0 ? "Scouting normal ne révèle aucun groupe" : null
+        reveal
+          ? `Caractéristiques révélées: [${revealedKeys.join(", ")}], largeur moyenne ±${Math.round(avgWidth / 2)} (potentiel affiché: "?") · Budget: ${money()}`
+          : `Aucune fourchette disponible (candidate.scoutReveal absent) · Budget: ${money()}`,
+        !scoutedNow && !reveal
+          ? "scoutDriver() a retourné false — pilote déjà marqué scouted=true (probablement par autoRevealCandidates en arrière-plan) sans scoutReveal jamais renseigné"
+          : scoutedNow && revealedKeys.length === 0
+            ? "Scouting normal ne révèle aucune caractéristique"
+            : null
       );
       const res = signDriver(state, candidate.id);
       if (res.ok) {

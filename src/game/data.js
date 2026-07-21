@@ -156,10 +156,24 @@ export function allocateVariableTeamSizes(total, min, max, rng) {
 
 const ROUND_COUNTS = { karting: 20, f4: 11, f3: 15, f2: 18, f1: 24, wec: 8, rally: 12 };
 
+// Each round has a track style favoring specific attributes — a driver strong in Pluie is
+// advantaged on a "pluvieux" round, relative to their OWN general level, rather than every
+// round being pure uniform noise. Cycled in a fixed rotation per round index (like the
+// calendar itself, this is static across games, not seeded per-game).
+export const TRACK_STYLES = {
+  rapide: { label: "Rapide", attrs: ["qualification", "pilotage", "depart"] },
+  technique: { label: "Technique", attrs: ["trajectoire", "freinage", "feeling"] },
+  pluvieux: { label: "Pluvieux", attrs: ["pluie", "evitement", "concentration"] },
+  usant: { label: "Usant en pneus", attrs: ["gestionPneus", "resistance", "rigueur"] },
+  bagarre: { label: "Bagarre", attrs: ["depassement", "defense", "agressivite"] },
+};
+const TRACK_STYLE_IDS = Object.keys(TRACK_STYLES);
+
 for (const category of CATEGORIES) {
   category.roundCount = ROUND_COUNTS[category.id];
   category.calendar = spreadRounds(category.roundCount, RACE_WEEKS);
   category.workload = category.roundCount;
+  category.roundStyles = category.calendar.map((_, i) => TRACK_STYLE_IDS[i % TRACK_STYLE_IDS.length]);
 }
 
 export const MAX_DRIVER_WORKLOAD = 30;
@@ -200,19 +214,33 @@ export function nextCategories(currentId) {
   return CATEGORIES.filter((c) => c.tier === current.tier + 1 || (c.branch && c.tier === current.tier));
 }
 
-const FIRST_NAMES = [
+// Split by sex so randomName can pick a first name consistent with a character's sex instead
+// of drawing from one mixed pool (which used to let a "F" driver end up named "Lucas").
+const FIRST_NAMES_M = [
   "Lucas", "Enzo", "Nathan", "Leo", "Rayan", "Mateo", "Adam", "Noah", "Gabriel", "Theo",
-  "Mia", "Chiara", "Sofia", "Amelia", "Lena", "Nora", "Elena", "Julia", "Sara", "Ines",
   "Kenji", "Diego", "Marco", "Lars", "Otto", "Bjorn", "Pierre", "Antoine", "Hugo", "Victor",
+  "Ethan", "Louis", "Tom", "Jules", "Arthur", "Maxime", "Yanis", "Nolan", "Axel", "Ivan",
+  "Erik", "Felix", "Milo", "Oscar", "Ryo", "Haruto", "Dmitri", "Pavel", "Miguel", "Rafael",
+];
+const FIRST_NAMES_F = [
+  "Mia", "Chiara", "Sofia", "Amelia", "Lena", "Nora", "Elena", "Julia", "Sara", "Ines",
+  "Emma", "Chloe", "Camille", "Alice", "Maya", "Livia", "Anna", "Clara", "Lucia", "Zoe",
+  "Yui", "Sakura", "Freya", "Astrid", "Greta", "Olga", "Irina", "Paula", "Carla", "Nina",
+  "Iris", "Luna", "Stella", "Aria", "Mila", "Talia", "Vera", "Selma", "Romy", "Noemie",
 ];
 const LAST_NAMES = [
   "Moreau", "Dubois", "Lefevre", "Girard", "Andersson", "Nilsson", "Rossi", "Bianchi",
   "Fischer", "Weber", "Novak", "Kowalski", "Silva", "Santos", "Herrera", "Ramos",
   "Tanaka", "Sato", "Wallace", "Bennett", "Cortez", "Duval", "Renard", "Lopez",
+  "Martin", "Bernard", "Petit", "Roux", "Fontaine", "Chevalier", "Muller", "Schmidt",
+  "Schneider", "Hoffmann", "Ferrari", "Romano", "Conti", "Esposito", "Suzuki", "Watanabe",
+  "Kobayashi", "Nakamura", "Petrov", "Sokolov", "Volkov", "Garcia", "Fernandez", "Torres",
+  "Almeida", "Costa",
 ];
 
-export function randomName(rng) {
-  const first = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
+export function randomName(rng, sex = null) {
+  const pool = sex === "F" ? FIRST_NAMES_F : sex === "M" ? FIRST_NAMES_M : [...FIRST_NAMES_M, ...FIRST_NAMES_F];
+  const first = pool[Math.floor(rng() * pool.length)];
   const last = LAST_NAMES[Math.floor(rng() * LAST_NAMES.length)];
   return `${first} ${last}`;
 }

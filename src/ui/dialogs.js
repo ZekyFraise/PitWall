@@ -1,4 +1,5 @@
 let toastContainer = null;
+let saveBannerContainer = null;
 
 function ensureToastContainer() {
   if (!toastContainer) {
@@ -21,6 +22,31 @@ export function showToast(message, type = "error") {
     toast.classList.remove("visible");
     setTimeout(() => toast.remove(), 250);
   }, 4000);
+}
+
+// Bigger, top-center, longer-lived than the corner toast — reserved for the explicit
+// "Sauvegarder" button, not the silent auto-saves that happen after other actions.
+function ensureSaveBannerContainer() {
+  if (!saveBannerContainer) {
+    saveBannerContainer = document.createElement("div");
+    saveBannerContainer.className = "save-banner-container";
+    document.body.appendChild(saveBannerContainer);
+  }
+  return saveBannerContainer;
+}
+
+export function showSaveBanner(message, type = "success") {
+  const container = ensureSaveBannerContainer();
+  const banner = document.createElement("div");
+  banner.className = `save-banner save-banner-${type}`;
+  banner.textContent = message;
+  container.appendChild(banner);
+
+  requestAnimationFrame(() => banner.classList.add("visible"));
+  setTimeout(() => {
+    banner.classList.remove("visible");
+    setTimeout(() => banner.remove(), 250);
+  }, 3000);
 }
 
 // Splits a tradeoff string into one line per outcome branch. Branches are separated by

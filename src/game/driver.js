@@ -1,4 +1,5 @@
 import { randomName, CATEGORY_BY_ID, PRO_TIER_THRESHOLD } from "./data.js";
+import { assignDriverTraits, traitStatBonus } from "./traits.js";
 
 let nextId = 1;
 
@@ -69,10 +70,11 @@ export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 }
     const swing = (rng() * 2 - 1) * 20;
     attributes[key] = clamp(attributeCenter + swing, 20, 95);
   }
+  const sex = rng() < 0.5 ? "F" : "M";
   return {
     id: nextId++,
-    name: randomName(rng),
-    sex: rng() < 0.5 ? "F" : "M",
+    name: randomName(rng, sex),
+    sex,
     age,
     categoryId: null,
     contract: null,
@@ -92,12 +94,16 @@ export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 }
     agencyRelationship: 70,
     teamRelationship: 60,
     negotiationPatience: 100,
+    bestPositionThisSeason: null,
     form: 50,
     careerResults: [],
     seasonHistory: [],
     pendingOffers: [],
     pendingOfferBudget: 0,
     proposedAt: null,
+    // Appended last so it consumes rng() after every other field — preserves the existing
+    // rng call sequence (and thus seeded/deterministic generation) for everything above.
+    traits: assignDriverTraits(rng),
   };
 }
 
@@ -130,12 +136,6 @@ export function getDriverById(state, id) {
   return state.drivers.find((d) => d.id === id) ?? state.aiDrivers[id] ?? null;
 }
 
-const RATING_WEIGHTS_BY_PROFILE = {
-  circuit: { technique: 0.4, mental: 0.25, physique: 0.1, discipline: 0.25 },
-  endurance: { technique: 0.3, mental: 0.2, physique: 0.25, discipline: 0.25 },
-  rallye: { technique: 0.3, mental: 0.25, physique: 0.15, discipline: 0.3 },
-};
-
 function disciplineKeyFor(category) {
   if (!category) return "circuit";
   if (category.id === "rally") return "rallye";
@@ -143,32 +143,65 @@ function disciplineKeyFor(category) {
   return "circuit";
 }
 
-function ratingProfileFor(category) {
-  if (!category) return RATING_WEIGHTS_BY_PROFILE.circuit;
-  if (category.id === "rally") return RATING_WEIGHTS_BY_PROFILE.rallye;
-  if (category.id === "wec") return RATING_WEIGHTS_BY_PROFILE.endurance;
-  return RATING_WEIGHTS_BY_PROFILE.circuit;
-}
-
 export function groupAverage(driver, group) {
   const keys = Object.keys(ATTRIBUTE_META).filter((k) => ATTRIBUTE_META[k].group === group);
   return keys.reduce((sum, k) => sum + driver.attributes[k], 0) / keys.length;
 }
 
+// Super stats: the real performance/negotiation/growth inputs, each a plain average of a
+// handful of the 32 raw attributes. Raw attributes stay the generation/growth/scouting layer
+// underneath (per-attribute scouting windows, individual drift) — the super stats are what
+// the rest of the game actually reads. Régularité mirrors the old reliability() attribute set
+// (+2 related attributes); the other four replace the old technique/mental/physique split.
+export const SUPER_STATS = {
+  rythme: { label: "Rythme", attrs: ["pilotage", "freinage", "trajectoire", "qualification", "feeling", "depart"] },
+  regularite: { label: "Régularité", attrs: ["sangFroid", "concentration", "rigueur", "professionnalisme", "resilience"] },
+  resistance: { label: "Résistance", attrs: ["condition", "reflexes", "resistance", "visionPeripherique", "resistanceChaleur"] },
+  adaptabilite: { label: "Adaptabilité", attrs: ["adaptation", "gestionPneus", "pluie", "evitement", "defense", "depassement"] },
+  instinct: { label: "Instinct", attrs: ["agressivite", "leadership", "anticipation", "decision", "inspiration", "confiance"] },
+};
+
+export function superStat(driver, key) {
+  const stat = SUPER_STATS[key];
+  const base = stat.attrs.reduce((sum, k) => sum + driver.attributes[k], 0) / stat.attrs.length;
+  return clamp(base + traitStatBonus(driver, key), 0, 99);
+}
+
+export function superStatTooltip(key) {
+  return SUPER_STATS[key].attrs.map((a) => ATTRIBUTE_META[a].label).join(", ");
+}
+
+// Same category differentiation as before (circuit/endurance/rallye), just redistributed
+// across the 5 super stats instead of the old technique/mental/physique/discipline groups —
+// same totals per profile, same discipline weight.
+const OVERALL_WEIGHTS_BY_PROFILE = {
+  circuit: { rythme: 0.2, adaptabilite: 0.2, instinct: 0.25, resistance: 0.1, discipline: 0.25 },
+  endurance: { rythme: 0.15, adaptabilite: 0.15, instinct: 0.2, resistance: 0.25, discipline: 0.25 },
+  rallye: { rythme: 0.15, adaptabilite: 0.15, instinct: 0.25, resistance: 0.15, discipline: 0.3 },
+};
+
+function overallWeightsFor(category) {
+  if (!category) return OVERALL_WEIGHTS_BY_PROFILE.circuit;
+  if (category.id === "rally") return OVERALL_WEIGHTS_BY_PROFILE.rallye;
+  if (category.id === "wec") return OVERALL_WEIGHTS_BY_PROFILE.endurance;
+  return OVERALL_WEIGHTS_BY_PROFILE.circuit;
+}
+
 export function overallRating(driver) {
   const category = driver.categoryId ? CATEGORY_BY_ID[driver.categoryId] : null;
-  const weights = ratingProfileFor(category);
+  const weights = overallWeightsFor(category);
   const disciplineKey = disciplineKeyFor(category);
   return (
-    groupAverage(driver, "technique") * weights.technique +
-    groupAverage(driver, "mental") * weights.mental +
-    groupAverage(driver, "physique") * weights.physique +
+    superStat(driver, "rythme") * weights.rythme +
+    superStat(driver, "adaptabilite") * weights.adaptabilite +
+    superStat(driver, "instinct") * weights.instinct +
+    superStat(driver, "resistance") * weights.resistance +
     driver.attributes[disciplineKey] * weights.discipline
   );
 }
 
 export function reliability(driver) {
-  return (driver.attributes.sangFroid + driver.attributes.concentration + driver.attributes.rigueur) / 3;
+  return superStat(driver, "regularite");
 }
 
 // F3 (tier PRO_TIER_THRESHOLD - 1) runs Amateur economics (isPro false) but is displayed as
@@ -189,7 +222,16 @@ export function growDriver(driver, rng, growthMultiplier = 1) {
   const keys = Object.keys(driver.attributes);
   if (driver.age < peak) {
     const room = (driver.growthCeiling ?? driver.potential) - rating;
-    const growth = Math.max(0, room * (0.06 + rng() * 0.06)) * growthMultiplier;
+    // Growth is fastest early in a career and tapers off as the driver approaches their peak
+    // age — most development happens as a young prospect, not at a flat rate all the way to
+    // physical/mental maturity. 10+ years from peak caps the bonus at 1.3x; right at the peak
+    // it floors at 0.3x (the age<peak branch simply stops applying once age reaches peak).
+    const yearsToPeak = Math.max(1, peak - driver.age);
+    const ageFactor = clamp(yearsToPeak / 10, 0.3, 1.3);
+    // A higher-potential prospect isn't just capped higher (growthCeiling) — they also pick
+    // things up a bit faster, on top of that larger ceiling.
+    const potentialFactor = 0.85 + (driver.potential / 99) * 0.3;
+    const growth = Math.max(0, room * (0.06 + rng() * 0.06)) * growthMultiplier * ageFactor * potentialFactor;
     const breakthrough = rng() < 0.02 ? rng() * 2 : 0;
     for (const key of keys) {
       driver.attributes[key] = clamp(driver.attributes[key] + (growth + breakthrough) * (0.7 + rng() * 0.3), 0, 99);

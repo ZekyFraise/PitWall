@@ -965,6 +965,41 @@ h3 {
   border-color: var(--good);
 }
 
+.save-banner-container {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.save-banner {
+  background: var(--card);
+  border: 2px solid var(--good);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(-16px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.save-banner.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.save-banner-error {
+  border-color: var(--danger);
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

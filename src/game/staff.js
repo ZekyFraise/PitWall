@@ -1,5 +1,7 @@
 import { randomName } from "./data.js";
 import { recordTransaction } from "./finance.js";
+import { generateScoutReveal } from "./scoutReveal.js";
+import { assignStaffTraits, staffTraitSkillBonus } from "./traits.js";
 
 let nextStaffId = 1;
 
@@ -74,6 +76,7 @@ export function generateStaffMember(rng, role) {
     skills: { primary, secondary, communication, experience },
     hireCost: Math.round(2000 + primary * 150),
     weeklyWage: Math.round(150 + primary * 6),
+    traits: assignStaffTraits(rng),
   };
 }
 
@@ -160,9 +163,13 @@ export function deepScoutCost(state) {
 export function autoRevealCandidates(state, rng) {
   let remaining = recruiters(state).length;
   const unscouted = state.scoutPool.filter((d) => !d.scouted);
+  const discoverySkill = averageDiscoverySkill(state);
+  const precisionSkill = averagePrecisionSkill(state);
   while (remaining > 0 && unscouted.length > 0) {
     const idx = Math.floor(rng() * unscouted.length);
-    unscouted[idx].scouted = true;
+    const driver = unscouted[idx];
+    driver.scouted = true;
+    driver.scoutReveal = generateScoutReveal(rng, discoverySkill, precisionSkill);
     unscouted.splice(idx, 1);
     remaining -= 1;
   }
@@ -171,7 +178,7 @@ export function autoRevealCandidates(state, rng) {
 export function bestSkill(state, role) {
   const members = state.staff.filter((s) => s.role === role);
   if (members.length === 0) return 0;
-  return Math.max(...members.map((s) => s.skills.primary));
+  return Math.max(...members.map((s) => clamp(s.skills.primary + staffTraitSkillBonus(s), 0, 99)));
 }
 
 export function negotiationDiscount(state) {

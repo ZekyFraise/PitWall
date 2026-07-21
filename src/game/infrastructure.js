@@ -1,38 +1,40 @@
 import { recordTransaction } from "./finance.js";
 import { bestSkill, bestCommunication, averageExperience } from "./staff.js";
 
+// reputationRequired gates each upgrade in addition to its cost — level 1 (index 0, already
+// owned from the start) has no requirement, since it's never "purchased".
 export const FACILITIES = {
   offices: {
     name: "Bureaux",
     description: "Capacité d'effectif : nombre de pilotes que l'agence peut représenter.",
     levels: [
-      { capacity: 3, upkeep: 0, upgradeCost: 0 },
-      { capacity: 4, upkeep: 250, upgradeCost: 15000 },
-      { capacity: 5, upkeep: 600, upgradeCost: 40000 },
-      { capacity: 6, upkeep: 1200, upgradeCost: 90000 },
-      { capacity: 8, upkeep: 2200, upgradeCost: 180000 },
+      { capacity: 3, upkeep: 0, upgradeCost: 0, reputationRequired: 0 },
+      { capacity: 4, upkeep: 250, upgradeCost: 15000, reputationRequired: 10 },
+      { capacity: 5, upkeep: 600, upgradeCost: 40000, reputationRequired: 25 },
+      { capacity: 6, upkeep: 1200, upgradeCost: 90000, reputationRequired: 45 },
+      { capacity: 8, upkeep: 2200, upgradeCost: 180000, reputationRequired: 70 },
     ],
   },
   training: {
     name: "Centre d'entraînement",
     description: "Accélère la progression de tes pilotes signés.",
     levels: [
-      { growthMultiplier: 1, upkeep: 0, upgradeCost: 0 },
-      { growthMultiplier: 1.15, upkeep: 300, upgradeCost: 18000 },
-      { growthMultiplier: 1.3, upkeep: 700, upgradeCost: 45000 },
-      { growthMultiplier: 1.45, upkeep: 1400, upgradeCost: 95000 },
-      { growthMultiplier: 1.6, upkeep: 2500, upgradeCost: 190000 },
+      { growthMultiplier: 1, upkeep: 0, upgradeCost: 0, reputationRequired: 0 },
+      { growthMultiplier: 1.15, upkeep: 300, upgradeCost: 18000, reputationRequired: 10 },
+      { growthMultiplier: 1.3, upkeep: 700, upgradeCost: 45000, reputationRequired: 25 },
+      { growthMultiplier: 1.45, upkeep: 1400, upgradeCost: 95000, reputationRequired: 45 },
+      { growthMultiplier: 1.6, upkeep: 2500, upgradeCost: 190000, reputationRequired: 70 },
     ],
   },
   prestige: {
     name: "Bureau de standing",
     description: "Renforce l'attrait de l'agence auprès des pilotes établis et limite le débauchage de tes pilotes libres.",
     levels: [
-      { appealBonus: 0, poachFactor: 1, upkeep: 0, upgradeCost: 0 },
-      { appealBonus: 15, poachFactor: 0.9, upkeep: 300, upgradeCost: 18000 },
-      { appealBonus: 30, poachFactor: 0.8, upkeep: 700, upgradeCost: 45000 },
-      { appealBonus: 50, poachFactor: 0.65, upkeep: 1400, upgradeCost: 95000 },
-      { appealBonus: 75, poachFactor: 0.5, upkeep: 2500, upgradeCost: 190000 },
+      { appealBonus: 0, poachFactor: 1, upkeep: 0, upgradeCost: 0, reputationRequired: 0 },
+      { appealBonus: 15, poachFactor: 0.9, upkeep: 300, upgradeCost: 18000, reputationRequired: 10 },
+      { appealBonus: 30, poachFactor: 0.8, upkeep: 700, upgradeCost: 45000, reputationRequired: 25 },
+      { appealBonus: 50, poachFactor: 0.65, upkeep: 1400, upgradeCost: 95000, reputationRequired: 45 },
+      { appealBonus: 75, poachFactor: 0.5, upkeep: 2500, upgradeCost: 190000, reputationRequired: 70 },
     ],
   },
 };
@@ -106,15 +108,18 @@ export function nextFacilityLevelData(state, facilityId) {
 
 export function upgradeFacility(state, facilityId, { force = false } = {}) {
   const next = nextFacilityLevelData(state, facilityId);
-  if (!next) return false;
+  if (!next) return { ok: false, error: "Niveau maximum atteint." };
+  if (!force && state.agency.reputation < next.reputationRequired) {
+    return { ok: false, error: `Réputation insuffisante (${next.reputationRequired} requise).` };
+  }
   const cost = force ? 0 : next.upgradeCost;
-  if (!force && state.agency.money < cost) return false;
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
   if (cost) {
     state.agency.money -= cost;
     recordTransaction(state, "facility-upgrade", `${FACILITIES[facilityId].name} niveau ${state.infrastructure[facilityId] + 1}`, -cost);
   }
   state.infrastructure[facilityId] += 1;
-  return true;
+  return { ok: true };
 }
 
 export function rosterCapacity(state) {

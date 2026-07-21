@@ -1,16 +1,62 @@
-import { CATEGORIES, CATEGORY_BY_ID, CATEGORY_EMOJI, SEASON_WEEKS, MAX_DRIVER_WORKLOAD, weekInSeason, isMercatoWindow } from "../../game/data.js";
-import { overallRating, reliability, peakAge, driverStatusLabel, ATTRIBUTE_META, ATTRIBUTE_GROUPS, GROUP_LABELS } from "../../game/driver.js";
+import { CATEGORIES, CATEGORY_BY_ID, CATEGORY_EMOJI, SEASON_WEEKS, MAX_DRIVER_WORKLOAD, weekInSeason, isMercatoWindow, TRACK_STYLES } from "../../game/data.js";
+import { overallRating, peakAge, driverStatusLabel, getDriverById, ATTRIBUTE_META, ATTRIBUTE_GROUPS, GROUP_LABELS, SUPER_STATS, superStat, superStatTooltip } from "../../game/driver.js";
 import { signCost, signCostRange, contractBaseline, LOAN_ELIGIBLE_THRESHOLD, LOAN_MAX_AMOUNT } from "../../game/state.js";
 import { findTeamById, totalWorkload, secondarySeatCost } from "../../game/team.js";
 import { FACILITIES, MAX_FACILITY_LEVEL, getFacilityLevelData, nextFacilityLevelData, SHOP_ITEMS, rosterCapacity } from "../../game/infrastructure.js";
 import { ROLES, scoutCost, deepScoutCost } from "../../game/staff.js";
 import { driverMarketValue, seasonResultsFor, championshipStanding } from "../../game/driverStats.js";
-import { racesUntilSeasonEnd } from "../../game/standings.js";
+import { racesUntilSeasonEnd, resolveSeasonView } from "../../game/standings.js";
 import { aggregatedTotals, breakdownByType, TRANSACTION_LABELS } from "../../game/finance.js";
 import { lineChart, barChart } from "../charts.js";
+import { DRIVER_TRAITS, STAFF_TRAITS, driverTraitTooltip, staffTraitTooltip } from "../../game/traits.js";
 
 function driverIdTag(driver) {
   return `<span class="id-tag">[#${driver.id}]</span>`;
+}
+
+const SUPER_STAT_KEYS = ["rythme", "regularite", "resistance", "adaptabilite", "instinct"];
+
+// The 5 super stats — the real performance inputs (driver.js) — displayed together wherever
+// Rythme/Régularité already appeared, gated by the same scouted/signed reveal boolean each
+// call site already used for those two. Each carries a tooltip listing its component attributes.
+function superStatsLine(driver, revealed) {
+  return SUPER_STAT_KEYS.map((key) => {
+    const value = revealed ? Math.round(superStat(driver, key)) : "?";
+    return `<span title="${superStatTooltip(key)}">${SUPER_STATS[key].label} : <b>${value}</b></span>`;
+  }).join(" · ");
+}
+
+// Same visual form as the classic attribute stat bars, grouped in their own card just above
+// the "Attributs" card — kept as a separate encart rather than folded into attributeSection
+// since super stats are composites (5-6 attributes each), not a 5th raw attribute group.
+function superStatSection(driver, revealed) {
+  const rowsFor = (keys) =>
+    keys
+      .map((key) => {
+        const label = SUPER_STATS[key].label;
+        const description = superStatTooltip(key);
+        return revealed ? statBar(label, superStat(driver, key), description) : scoutUnknownRow(label, description);
+      })
+      .join("");
+  const half = Math.ceil(SUPER_STAT_KEYS.length / 2);
+  return `
+    <h3>Super statistiques</h3>
+    <div class="card attributes-card super-stats-card">
+      <div class="attribute-group">${rowsFor(SUPER_STAT_KEYS.slice(0, half))}</div>
+      <div class="attribute-group">${rowsFor(SUPER_STAT_KEYS.slice(half))}</div>
+    </div>`;
+}
+
+// Traits are fixed at generation and hidden behind deep scouting for a prospect (same
+// convention as potentialKnown) — a signed driver always sees their own traits unconditionally,
+// like attributeSection/superStatSection already do.
+function traitsSection(driver, revealed) {
+  if (!revealed) return `<p class="muted">Traits inconnus — nécessite un scouting approfondi.</p>`;
+  const traits = driver.traits ?? [];
+  if (traits.length === 0) return `<p class="muted">Aucun trait particulier.</p>`;
+  return traits
+    .map((id) => `<span class="pill" title="${driverTraitTooltip(id)}">${DRIVER_TRAITS[id].label}</span>`)
+    .join(" ");
 }
 
 function statBar(label, value, description) {
@@ -169,8 +215,13 @@ function teamRankingLabel(state, teamId, categoryId) {
 // championshipStanding (driverStats.js) only looks at driver.categoryId (the main
 // championship) — this variant takes an explicit categoryId so it also works for a driver's
 // secondary-championship seats, which live outside driver.categoryId.
-function secondaryStanding(state, categoryId, driverId) {
-  const standings = state.standings[categoryId];
+// Classes like WEC (hypercar/GT3) store standings under a "categoryId:subClass" key — using
+// the bare categoryId here would always miss a driver's secondary-seat standing in one (same
+// bug class as teamRankingLabel's WEC fix, just for the driver-points side).
+function secondaryStanding(state, categoryId, teamId, driverId) {
+  const team = findTeamById(state, teamId);
+  const key = team?.subClass ? `${categoryId}:${team.subClass}` : categoryId;
+  const standings = state.standings[key];
   if (!standings || !(driverId in standings.driverPoints)) return { position: null, points: 0 };
   const ranked = Object.entries(standings.driverPoints).sort((a, b) => b[1] - a[1]);
   const position = ranked.findIndex(([id]) => Number(id) === driverId) + 1;
@@ -288,7 +339,7 @@ function secondaryChampionshipSection(state, driver) {
     .map((s) => {
       const t = findTeamById(state, s.teamId);
       const category = CATEGORY_BY_ID[s.categoryId];
-      const standing = secondaryStanding(state, s.categoryId, driver.id);
+      const standing = secondaryStanding(state, s.categoryId, s.teamId, driver.id);
       const standingLabel = standing.position ? `P${standing.position} · ${standing.points} pts` : "Pas encore classé";
       return `<div class="muted">${t?.name ?? "?"} — ${category?.name ?? s.categoryId} (${teamRankingLabel(state, s.teamId, s.categoryId)} · ${standingLabel})</div>`;
     })
@@ -324,14 +375,15 @@ function logEntry(entry) {
       const outcome = result.dnf
         ? "abandon"
         : `P${result.position}/${result.gridSize ?? category.gridSize}, +${result.prize.toLocaleString("fr-FR")}€`;
-      return `<li><b>${driver.name}</b> <span class="id-tag">[#${driver.id}]</span> — ${category.name} : ${outcome}</li>`;
+      const styleTag = result.styleLabel ? ` <span class="muted">(${result.styleLabel})</span>` : "";
+      return `<li><b>${driver.name}</b> <span class="id-tag">[#${driver.id}]</span> — ${category.name}${styleTag} : ${outcome}</li>`;
     }
     case "rival-scout-sign":
       return `<li class="muted">${entry.agencyName} signe ${entry.driverName} avant toi.</li>`;
     case "rival-poach":
       return `<li class="warn-text">${entry.agencyName} débauche ${entry.driverName}, resté sans contrat trop longtemps.</li>`;
     case "season-champion-driver":
-      return `<li class="highlight-line">Titre pilote : ${entry.driverName} est champion de ${entry.category.name} (saison ${entry.seasonNumber}) — un de tes pilotes !</li>`;
+      return `<li class="highlight-line">Titre pilote : ${entry.driverName} est champion de ${entry.category.name} (saison ${entry.seasonNumber})${entry.isPlayer ? " — un de tes pilotes !" : ""}</li>`;
     case "recruit-established":
       return `<li class="highlight-line">${entry.driverName} (${entry.category.name}) rejoint ton agence${entry.wasRivalManaged ? `, débauché à ${entry.previousAgencyName}` : ""}.</li>`;
     case "random-event":
@@ -369,10 +421,10 @@ function driverTableRow(state, driver) {
   const positionLabel =
     (position ?? "—") +
     withSecondaryTerms(driver, (s) => {
-      const st = secondaryStanding(state, s.categoryId, driver.id);
+      const st = secondaryStanding(state, s.categoryId, s.teamId, driver.id);
       return st.position ? `P${st.position}` : "—";
     });
-  const pointsLabel = points + withSecondaryTerms(driver, (s) => secondaryStanding(state, s.categoryId, driver.id).points);
+  const pointsLabel = points + withSecondaryTerms(driver, (s) => secondaryStanding(state, s.categoryId, s.teamId, driver.id).points);
   // References the ÉCURIE seat's expiry (end of season, with an automatic renewal roll at
   // rollover — standings.js), not the agency contract's — a separate, weeks-based duration
   // shown instead in the driver detail view's contract line.
@@ -419,9 +471,54 @@ export function renderMyDrivers(state) {
     </div>`;
 }
 
+function driverSeasonRoundCell(rounds, roundIndex, driverId) {
+  const round = rounds[roundIndex];
+  if (!round) return `<td class="muted">—</td>`;
+  const entry = round.find((e) => e.driverIds.includes(driverId));
+  if (!entry) return `<td class="muted">—</td>`;
+  if (entry.dnf) return `<td class="warn">Ret</td>`;
+  return `<td>${round.indexOf(entry) + 1}</td>`;
+}
+
+// Round-by-round detail for ONE driver, opened by clicking a row in their own "Historique"
+// table (current or past season) — reuses resolveSeasonView (standings.js) so live and
+// archived seasons resolve exactly the same way as the "Monde ▸ Championnats" season selector.
+function driverSeasonDetail(state, driver) {
+  const sel = state.ui.viewingDriverSeason;
+  if (!sel) return "";
+  const category = CATEGORY_BY_ID[sel.categoryId];
+  if (!category) return "";
+  const label = sel.classId
+    ? `${category.name} — ${category.classes?.find((c) => c.id === sel.classId)?.label ?? sel.classId}`
+    : category.name;
+  const heading = `<h3 class="class-heading">Détail manche par manche — Saison ${sel.seasonNumber} (${label})</h3>`;
+  const view = resolveSeasonView(state, sel.categoryId, sel.classId, sel.seasonNumber);
+  if (!view) {
+    return `${heading}<p class="muted">Détail non disponible pour cette saison (antérieure à l'introduction de ce suivi).</p>`;
+  }
+  const rounds = view.rounds ?? [];
+  const roundCount = category.roundCount ?? rounds.length;
+  let headerCells = "";
+  let resultCells = "";
+  for (let i = 0; i < roundCount; i++) {
+    const styleId = category.roundStyles?.[i];
+    const styleLabel = styleId ? TRACK_STYLES[styleId]?.label : null;
+    headerCells += `<th${styleLabel ? ` title="${styleLabel}"` : ""}>R${i + 1}</th>`;
+    resultCells += driverSeasonRoundCell(rounds, i, driver.id);
+  }
+  return `
+    ${heading}
+    <div class="table-scroll">
+      <table class="table wide">
+        <thead><tr>${headerCells}</tr></thead>
+        <tbody><tr>${resultCells}</tr></tbody>
+      </table>
+    </div>`;
+}
+
 function seasonHistoryRow(entry) {
   return `
-    <tr>
+    <tr class="clickable-row" data-action="view-driver-season" data-id="${entry.seasonNumber}" data-category-id="${entry.categoryId}" data-class-id="${entry.classId ?? ""}">
       <td>${entry.seasonNumber}</td>
       <td>${categoryLabel(entry.categoryId)}</td>
       <td>${entry.teamName}</td>
@@ -436,8 +533,6 @@ function seasonHistoryRow(entry) {
 
 function prospectDetail(state, driver) {
   const potential = driver.scoutReveal?.potentialKnown ? `${driver.potential}` : "?";
-  const pace = driver.scouted ? Math.round(overallRating(driver)) : "?";
-  const consistency = driver.scouted ? Math.round(reliability(driver)) : "?";
   return `
     <button data-action="back-to-roster" class="btn-red btn-large">← Retour</button>
     <h2>${driver.name} ${driverIdTag(driver)}</h2>
@@ -447,7 +542,7 @@ function prospectDetail(state, driver) {
         <span class="pill">${driver.sex} · ${driver.age} ans</span>
       </div>
       <div class="muted">Talent non signé — pas encore sous contrat d'agence.</div>
-      <div class="potential">Potentiel : <b>${potential}</b> · Rythme : <b>${pace}</b> · Régularité : <b>${consistency}</b></div>
+      <div class="potential">Potentiel : <b>${potential}</b></div>
       ${!driver.scouted ? `<p class="unscouted">Statistiques inconnues — fais scouter ce pilote.</p>` : ""}
       <div class="card-actions">
         ${!driver.scouted ? `<button data-action="scout" data-id="${driver.id}">Scouter (${scoutCost(state).toLocaleString("fr-FR")}€)</button>` : ""}
@@ -456,12 +551,42 @@ function prospectDetail(state, driver) {
         ${compareToggleButton("toggle-compare-driver", driver.id, state.ui.compareDriverIds ?? [], "compare-push-right")}
       </div>
     </div>
+    ${superStatSection(driver, driver.scouted)}
     <h3>Attributs</h3>
     <div class="card attributes-card">
       ${ATTRIBUTE_GROUPS.map((g) => prospectAttributeSection(driver, g)).join("")}
     </div>
     <h3>Traits</h3>
-    <p class="muted">Aucun trait pour l'instant.</p>`;
+    ${traitsSection(driver, driver.scoutReveal?.traitsKnown)}`;
+}
+
+// Read-only fiche for a driver outside the player's agency (rival-managed or independent AI),
+// reached by clicking a row in Monde ▸ Pilotes — no negotiation/proposition/release actions,
+// since those only make sense for the player's own roster. Race/win/podium counts are omitted:
+// careerResults is only ever populated for player drivers (simulate.js), so it would always
+// read 0 here even for an AI driver who's actually raced and scored.
+function readOnlyDriverDetail(state, driver) {
+  const category = CATEGORY_BY_ID[driver.categoryId];
+  const team = driver.teamId ? findTeamById(state, driver.teamId) : null;
+  const rating = Math.round(overallRating(driver));
+  const { position, points } = championshipStanding(state, driver);
+  const seatLabel = team ? `${team.name} · Prestige ${prestigeStars(team.prestige)} (${team.prestige})` : `<span class="warn">Sans écurie</span>`;
+  const agency = driver.agencyId ? state.rivalAgencies.find((a) => a.id === driver.agencyId) : null;
+  const managedLabel = agency ? `Géré par ${agency.name}` : "Pilote indépendant";
+
+  return `
+    <button data-action="back-to-roster" class="btn-red btn-large">← Retour</button>
+    <h2>${driver.name} ${driverIdTag(driver)}</h2>
+    <div class="card">
+      <div class="card-head"><strong>${driver.name}</strong></div>
+      <div class="identity-line">${driver.sex} · ${driver.age} ans · OVR ${rating} · ${driverStatusLabel(driver, category)}</div>
+      <div class="muted">${seatLabel} · ${driver.categoryId ? categoryLabel(driver.categoryId) : "Non affecté"} · ${managedLabel}</div>
+      <div class="muted">Cette saison : ${points} pts · ${position ? `P${position}` : "—"} au championnat</div>
+    </div>
+    <h3>Attributs</h3>
+    <div class="card attributes-card">
+      ${ATTRIBUTE_GROUPS.map((g) => attributeSection(driver, g)).join("")}
+    </div>`;
 }
 
 export function renderDriverDetail(state) {
@@ -469,6 +594,8 @@ export function renderDriverDetail(state) {
   if (!driver) {
     const prospect = state.scoutPool.find((d) => d.id === state.ui.viewingDriverId);
     if (prospect) return prospectDetail(state, prospect);
+    const other = getDriverById(state, state.ui.viewingDriverId);
+    if (other) return readOnlyDriverDetail(state, other);
     return `
       <button data-action="back-to-roster" class="btn-red btn-large">← Retour</button>
       <h2>Fiche pilote</h2>
@@ -492,10 +619,16 @@ export function renderDriverDetail(state) {
       : `<span class="warn">Sans contrat — risque de débauchage</span>`;
   const seatLabel = team ? `${team.name} · Prestige ${prestigeStars(team.prestige)} (${team.prestige})` : `<span class="warn">Sans écurie — ne court pas</span>`;
 
+  // Classes like WEC (hypercar/GT3) store standings under a "categoryId:subClass" key — using
+  // the bare categoryId here would always miss the driver's live season number/round data (same
+  // bug class fixed earlier for teamRankingLabel/secondaryStanding).
+  const currentClassId = team?.subClass ?? null;
+  const currentStandingsKey = currentClassId ? `${driver.categoryId}:${currentClassId}` : driver.categoryId;
+  const currentSeasonNumber = state.standings[currentStandingsKey]?.seasonNumber ?? 1;
   const currentSeasonRow = driver.categoryId
     ? `
-      <tr class="highlight-row">
-        <td>${state.standings[driver.categoryId]?.seasonNumber ?? 1} (en cours)</td>
+      <tr class="highlight-row clickable-row" data-action="view-driver-season" data-id="${currentSeasonNumber}" data-category-id="${driver.categoryId}" data-class-id="${currentClassId ?? ""}">
+        <td>${currentSeasonNumber} (en cours)</td>
         <td>${categoryLabel(driver.categoryId)}</td>
         <td>${team ? team.name : "Sans écurie"}</td>
         <td>${rating}</td>
@@ -540,33 +673,35 @@ export function renderDriverDetail(state) {
     ${!driver.contract ? contractNegotiationSection(state, driver) : ""}
     ${offersSection(state, driver)}
     ${secondaryChampionshipSection(state, driver)}
+    ${superStatSection(driver, true)}
     <h3>Attributs</h3>
     <div class="card attributes-card">
       ${ATTRIBUTE_GROUPS.map((g) => attributeSection(driver, g)).join("")}
     </div>
     <h3>Traits</h3>
-    <p class="muted">Aucun trait pour l'instant.</p>
+    ${traitsSection(driver, true)}
     <h3>Historique</h3>
     <div class="table-scroll">
       <table class="table">
         <thead><tr><th>Saison</th><th>Catégorie</th><th>Écurie</th><th>Niveau</th><th>Valeur</th><th>Courses</th><th>Victoires</th><th>Podiums</th><th>Pos.</th></tr></thead>
         <tbody>${historyRows || `<tr><td class="muted" colspan="9">Pas encore d'historique.</td></tr>`}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${driverSeasonDetail(state, driver)}`;
 }
 
 function talentsRow(state, driver) {
   const potential = driver.scoutReveal?.potentialKnown ? driver.potential : "?";
-  const pace = driver.scouted ? Math.round(overallRating(driver)) : "?";
-  const consistency = driver.scouted ? Math.round(reliability(driver)) : "?";
+  const statCells = SUPER_STAT_KEYS.map(
+    (key) => `<td title="${superStatTooltip(key)}">${driver.scouted ? Math.round(superStat(driver, key)) : "?"}</td>`
+  ).join("");
   return `
     <tr data-action="view-driver" data-id="${driver.id}" class="clickable-row">
       <td>${driver.name} ${driverIdTag(driver)}</td>
       <td>${driver.sex}</td>
       <td>${driver.age}</td>
       <td>${potential}</td>
-      <td>${pace}</td>
-      <td>${consistency}</td>
+      ${statCells}
       <td class="row-actions">
         ${!driver.scouted ? `<button data-action="scout" data-id="${driver.id}" class="small">Scouter (${scoutCost(state).toLocaleString("fr-FR")}€)</button>` : ""}
         ${driver.scouted && !driver.scoutReveal?.potentialKnown ? `<button data-action="deep-scout" data-id="${driver.id}" class="secondary small">Scouting approfondi (${deepScoutCost(state).toLocaleString("fr-FR")}€)</button>` : ""}
@@ -587,9 +722,9 @@ export function renderTalents(state) {
     <div class="table-scroll">
       <table class="table wide">
         <thead>
-          <tr><th>Nom</th><th>Sexe</th><th>Âge</th><th>Potentiel</th><th>Rythme</th><th>Régularité</th><th>Action</th></tr>
+          <tr><th>Nom</th><th>Sexe</th><th>Âge</th><th>Potentiel</th>${SUPER_STAT_KEYS.map((key) => `<th title="${superStatTooltip(key)}">${SUPER_STATS[key].label}</th>`).join("")}<th>Action</th></tr>
         </thead>
-        <tbody>${rows || `<tr><td class="muted" colspan="7">Aucun talent disponible pour l'instant.</td></tr>`}</tbody>
+        <tbody>${rows || `<tr><td class="muted" colspan="9">Aucun talent disponible pour l'instant.</td></tr>`}</tbody>
       </table>
     </div>`;
 }
@@ -605,12 +740,10 @@ function compareDriverColumn(state, driver) {
   const headerLine = signed
     ? `${driver.sex} · ${driver.age} ans · OVR ${rating} · ${driverStatusLabel(driver, category)}`
     : `${driver.sex} · ${driver.age} ans · Talent non signé`;
-  // Potentiel/Rythme/Régularité mirror the same reveal gating as everywhere else a
-  // prospect's stats show up — a signed driver's potential/attributes are never hidden,
-  // a prospect's are gated by scouting.
+  // Potentiel/super stats mirror the same reveal gating as everywhere else a prospect's
+  // stats show up — a signed driver's potential/attributes are never hidden, a prospect's
+  // are gated by scouting.
   const potential = signed || driver.scoutReveal?.potentialKnown ? driver.potential : "?";
-  const pace = signed || driver.scouted ? rating : "?";
-  const regularity = signed || driver.scouted ? Math.round(reliability(driver)) : "?";
   const attributesHtml = signed
     ? ATTRIBUTE_GROUPS.map((g) => attributeSection(driver, g)).join("")
     : ATTRIBUTE_GROUPS.map((g) => prospectAttributeSection(driver, g)).join("");
@@ -621,10 +754,11 @@ function compareDriverColumn(state, driver) {
           <strong>${driver.name} ${driverIdTag(driver)}</strong>
           <span class="pill">${headerLine}</span>
         </div>
-        <div class="muted">Potentiel : <b>${potential}</b> · Rythme : <b>${pace}</b> · Régularité : <b>${regularity}</b></div>
+        <div class="muted">Potentiel : <b>${potential}</b> · ${superStatsLine(driver, signed || driver.scouted)}</div>
         <div class="card-actions">${compareToggleButton("toggle-compare-driver", driver.id, state.ui.compareDriverIds ?? [])}</div>
       </div>
       <div class="card attributes-card">${attributesHtml}</div>
+      <div class="card-actions">${traitsSection(driver, signed || driver.scoutReveal?.traitsKnown)}</div>
     </div>`;
 }
 
@@ -646,6 +780,14 @@ export function renderCompareDrivers(state) {
     </div>`;
 }
 
+// Staff has no scouting/reveal system at all — its skills are already shown unconditionally,
+// so its traits follow the same convention (unlike driver traits, never gated).
+function staffTraitsLine(member) {
+  return (member.traits ?? [])
+    .map((id) => `<span class="pill" title="${staffTraitTooltip(id)}">${STAFF_TRAITS[id].label}</span>`)
+    .join(" ");
+}
+
 function staffCard(state, member, hired) {
   const role = ROLES[member.role];
   const compareIds = state.ui.compareStaffIds ?? [];
@@ -658,6 +800,7 @@ function staffCard(state, member, hired) {
       ${statBar(role.skillLabel, member.skills.primary)}
       ${statBar(role.secondaryLabel, member.skills.secondary)}
       <div class="muted">Communication ${member.skills.communication} · Expérience ${member.skills.experience}</div>
+      ${member.traits?.length ? `<div>${staffTraitsLine(member)}</div>` : ""}
       <div class="muted">Salaire ${member.weeklyWage.toLocaleString("fr-FR")}€/sem</div>
       <div class="card-actions">
         ${
@@ -667,6 +810,25 @@ function staffCard(state, member, hired) {
         }
         ${compareToggleButton("toggle-compare-staff", member.id, compareIds, "compare-push-right")}
       </div>
+    </div>`;
+}
+
+// Search by role instead of dumping the whole staffPool at once — it can hold up to ~240
+// candidates after seedWorldStaff (state.js), which used to render unfiltered as cards.
+function staffPoolRoleTabs(state) {
+  const active = state.ui.staffFilter?.role ?? "all";
+  const tabs = [{ id: "all", label: "Tous les rôles" }, ...Object.entries(ROLES).map(([id, r]) => ({ id, label: r.name }))];
+  return tabs
+    .map((t) => `<button class="tab ${t.id === active ? "active" : ""}" data-action="filter-staff-pool" data-id="${t.id}">${t.label}</button>`)
+    .join("");
+}
+
+function staffPoolAttributeFilterRow(state) {
+  const filter = state.ui.staffFilter ?? {};
+  return `
+    <div class="filter-row">
+      <label>Compétence principale min. <input type="number" min="0" max="99" data-action="filter-staff-pool-min-primary" value="${filter.minPrimary ?? 0}" /></label>
+      <label>Salaire max. <input type="number" min="0" step="50" data-action="filter-staff-pool-max-wage" value="${filter.maxWage ?? 0}" placeholder="Aucun plafond" /> €/sem</label>
     </div>`;
 }
 
@@ -683,13 +845,26 @@ export function renderStaff(state) {
     )
     .join("");
 
+  const filter = state.ui.staffFilter ?? {};
+  const activeRole = filter.role ?? "all";
+  const minPrimary = filter.minPrimary ?? 0;
+  const maxWage = filter.maxWage ?? 0;
+  const pool = state.staffPool.filter((m) => {
+    if (activeRole !== "all" && m.role !== activeRole) return false;
+    if (minPrimary > 0 && m.skills.primary < minPrimary) return false;
+    if (maxWage > 0 && m.weeklyWage > maxWage) return false;
+    return true;
+  });
+
   return `
     <h2>Staff</h2>
     ${compareBar("compare-staff", "clear-compare-staff", state.ui.compareStaffIds ?? [], "membre(s) de staff")}
     ${state.staff.length ? groupsHtml : `<p class="muted">Aucun membre du staff engagé.</p>`}
-    <h3>Candidats disponibles</h3>
+    <h3>Candidats disponibles (${pool.length}/${state.staffPool.length})</h3>
+    <div class="tabs">${staffPoolRoleTabs(state)}</div>
+    ${staffPoolAttributeFilterRow(state)}
     <div class="card-grid">
-      ${state.staffPool.map((r) => staffCard(state, r, false)).join("")}
+      ${pool.length ? pool.map((r) => staffCard(state, r, false)).join("") : `<p class="muted">Aucun candidat pour ces filtres.</p>`}
     </div>`;
 }
 
@@ -752,28 +927,38 @@ function describeFacilityEffect(facilityId, levelData) {
   return "";
 }
 
+function facilityLevelStars(level, max) {
+  return "★".repeat(level) + "☆".repeat(max - level);
+}
+
 function facilityCard(state, facilityId) {
   const meta = FACILITIES[facilityId];
   const level = state.infrastructure[facilityId];
   const current = getFacilityLevelData(state, facilityId);
   const next = nextFacilityLevelData(state, facilityId);
+  const repOk = !next || state.agency.reputation >= next.reputationRequired;
+
+  const nextPreview = next
+    ? `<div class="muted">Prochain palier : ${describeFacilityEffect(facilityId, next)} · Entretien ${next.upkeep.toLocaleString("fr-FR")}€/sem · Réputation requise : ${next.reputationRequired}</div>`
+    : "";
+
+  const actionButton = !next
+    ? `<span class="pill">Niveau maximum</span>`
+    : repOk
+      ? `<button data-action="upgrade-facility" data-id="${facilityId}" class="btn-green">Améliorer (${next.upgradeCost.toLocaleString("fr-FR")}€)</button>`
+      : `<button class="secondary" disabled>Réputation insuffisante (${next.reputationRequired})</button>`;
 
   return `
     <div class="card">
       <div class="card-head">
         <strong>${meta.name}</strong>
-        <span class="pill">Niveau ${level}/${MAX_FACILITY_LEVEL}</span>
+        <span class="pill" title="Niveau ${level}/${MAX_FACILITY_LEVEL}">${facilityLevelStars(level, MAX_FACILITY_LEVEL)}</span>
       </div>
       <div class="muted">${meta.description}</div>
-      <div class="finance-figure">${describeFacilityEffect(facilityId, current)}</div>
+      <div class="finance-figure">Actuel : ${describeFacilityEffect(facilityId, current)}</div>
       <div class="muted">Entretien ${current.upkeep.toLocaleString("fr-FR")}€/sem</div>
-      <div class="card-actions">
-        ${
-          next
-            ? `<button data-action="upgrade-facility" data-id="${facilityId}" class="btn-green">Améliorer (${next.upgradeCost.toLocaleString("fr-FR")}€)</button>`
-            : `<span class="pill">Niveau maximum</span>`
-        }
-      </div>
+      ${nextPreview}
+      <div class="card-actions">${actionButton}</div>
     </div>`;
 }
 

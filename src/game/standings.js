@@ -37,10 +37,47 @@ export function racesUntilSeasonEnd(state, categoryId) {
 export function ensureStandings(state, categoryId, classId = null) {
   const key = standingsKey(categoryId, classId);
   if (!state.standings[key]) {
-    state.standings[key] = { race: 0, seasonNumber: 1, driverPoints: {}, teamPoints: {}, carPoints: {} };
+    state.standings[key] = { race: 0, seasonNumber: 1, driverPoints: {}, teamPoints: {}, carPoints: {}, rounds: [] };
   }
   if (!state.standings[key].carPoints) state.standings[key].carPoints = {};
+  if (!state.standings[key].rounds) state.standings[key].rounds = [];
   return state.standings[key];
+}
+
+// Read-only lookup for a specific past-or-current season's standings snapshot (live or
+// archived), by category/class/season number — shared by the "Monde ▸ Championnats" season
+// selector and a driver's own "Historique" row click-through, so both resolve live-vs-archived
+// the exact same way. Returns null if that season simply isn't resolvable (e.g. it predates
+// the round-capture feature, or the category/season combination never existed).
+export function resolveSeasonView(state, categoryId, classId, seasonNumber) {
+  const key = standingsKey(categoryId, classId);
+  const live = state.standings[key];
+  if (live && live.seasonNumber === seasonNumber) return live;
+  return (state.seasonArchive?.[key] ?? []).find((s) => s.seasonNumber === seasonNumber) ?? null;
+}
+
+// Captures the full round classification (already computed as `scored` right before points are
+// awarded) for EVERY entrant — not just the player's, unlike driver.careerResults — so a
+// Wikipedia-style round-by-round grid can be rendered for any driver/team later. Names are
+// duplicated per round rather than resolved live at render time: AI drivers are sometimes
+// deleted and replaced at season-end retirement (see rolloverIfNeeded), which would otherwise
+// make an archived season's driver names unresolvable after the fact.
+export function recordRoundResult(state, categoryId, classId, scored) {
+  const standings = ensureStandings(state, categoryId, classId);
+  standings.rounds.push(
+    scored.map((e) => {
+      const carIndex = e.carId != null ? Number(e.carId.split(":")[1]) : null;
+      return {
+        driverIds: e.drivers.map((d) => d.id),
+        driverNames: e.drivers.map((d) => d.name),
+        teamId: e.team.id,
+        teamName: e.team.name,
+        carId: e.carId,
+        carNumber: carIndex != null ? e.team.carNumbers?.[carIndex] ?? null : null,
+        dnf: e.dnf,
+      };
+    })
+  );
 }
 
 export function applyPoints(state, categoryId, rankedEntrants, options = {}) {
@@ -103,11 +140,14 @@ export function rolloverIfNeeded(state, category, rng, classId = null) {
   const entries = [];
   const driverChampionId = topKey(standings.driverPoints);
   const teamChampionId = category.carClassification ? null : topKey(standings.teamPoints);
+  let driverChampionRecord = null;
+  let teamChampionRecord = null;
 
   if (driverChampionId != null) {
     const champion = getDriverById(state, Number(driverChampionId));
     if (champion) {
       const isPlayer = state.drivers.some((d) => d.id === champion.id);
+      driverChampionRecord = { id: champion.id, name: champion.name, isPlayer };
       entries.push({
         type: "season-champion-driver",
         category,
@@ -126,6 +166,7 @@ export function rolloverIfNeeded(state, category, rng, classId = null) {
   if (teamChampionId != null) {
     const team = classTeams.find((t) => t.id === Number(teamChampionId));
     if (team) {
+      teamChampionRecord = { id: team.id, name: team.name };
       entries.push({
         type: "season-champion-team",
         category,
@@ -133,6 +174,20 @@ export function rolloverIfNeeded(state, category, rng, classId = null) {
         seasonNumber: standings.seasonNumber,
       });
     }
+  }
+
+  // Durable record for the Palmarès screen — state.log is only ever shown truncated to its
+  // last 40-60 entries (renderNews/renderResults), so early-season champions would otherwise
+  // become permanently unreachable in a long game.
+  if (driverChampionRecord || teamChampionRecord) {
+    state.championsHistory = state.championsHistory ?? [];
+    state.championsHistory.push({
+      seasonNumber: standings.seasonNumber,
+      categoryId: category.id,
+      classId,
+      driverChampion: driverChampionRecord,
+      teamChampion: teamChampionRecord,
+    });
   }
 
   const usedNumbers = usedDriverNumbersInCategory(state, category.id);
@@ -167,6 +222,7 @@ export function rolloverIfNeeded(state, category, rng, classId = null) {
     driver.seasonHistory.push({
       seasonNumber: standings.seasonNumber,
       categoryId: category.id,
+      classId: classId ?? null,
       teamName: team ? team.name : "Sans écurie",
       rating: Math.round(overallRating(driver)),
       value: driverMarketValue(driver),
@@ -195,11 +251,35 @@ export function rolloverIfNeeded(state, category, rng, classId = null) {
     }
   }
 
+  // Reset the "best result this season" tiebreak (see simulate.js) for the new season.
+  for (const team of classTeams) {
+    team.bestPositionThisSeason = null;
+    for (const seat of team.seats) {
+      const occupant = seat.driverId != null ? getDriverById(state, seat.driverId) : null;
+      if (occupant) occupant.bestPositionThisSeason = null;
+    }
+  }
+
+  // Durable round-by-round archive for the "Monde ▸ Championnats" season selector — same shape
+  // as the live standings entry (driverPoints/teamPoints/carPoints/rounds), so one rendering
+  // function can read either without a special case. Kept indefinitely (no cap/prune) per an
+  // explicit request to browse every past season, not just recent ones.
+  const archiveKey = standingsKey(category.id, classId);
+  state.seasonArchive = state.seasonArchive ?? {};
+  (state.seasonArchive[archiveKey] ??= []).push({
+    seasonNumber: standings.seasonNumber,
+    driverPoints: standings.driverPoints,
+    teamPoints: standings.teamPoints,
+    carPoints: standings.carPoints,
+    rounds: standings.rounds,
+  });
+
   standings.race = 0;
   standings.seasonNumber += 1;
   standings.driverPoints = {};
   standings.teamPoints = {};
   standings.carPoints = {};
+  standings.rounds = [];
 
   return entries;
 }

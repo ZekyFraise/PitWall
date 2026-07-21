@@ -63,10 +63,11 @@ function renderLoadScreen(saves) {
       (s) => `
       <div class="save-row">
         <div>
-          <strong>${s.agencyName}</strong>
-          <span class="muted">Semaine ${weekInSeason(s.week)}/${SEASON_WEEKS} · An ${Math.ceil(s.week / SEASON_WEEKS)} · ${s.money.toLocaleString("fr-FR")}€</span>
+          <input type="text" class="save-name-input" data-role="save-name" maxlength="40" value="${escapeAttr(s.saveName ?? s.agencyName)}" />
+          <span class="muted">${s.agencyName} · Semaine ${weekInSeason(s.week)}/${SEASON_WEEKS} · An ${Math.ceil(s.week / SEASON_WEEKS)} · ${s.money.toLocaleString("fr-FR")}€</span>
         </div>
         <div class="card-actions">
+          <button data-action="rename-save" data-id="${s.slotId}" class="secondary small">Renommer</button>
           <button data-action="load-slot" data-id="${s.slotId}">Charger</button>
           <button data-action="delete-slot" data-id="${s.slotId}" class="secondary">Supprimer</button>
         </div>

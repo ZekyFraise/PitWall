@@ -1,9 +1,9 @@
-import { CATEGORIES, CATEGORY_BY_ID, PRO_COMMISSION_RATE, weekInSeason } from "./data.js";
-import { overallRating, growDriver, getDriverById, reliability } from "./driver.js";
+import { CATEGORIES, CATEGORY_BY_ID, PRO_COMMISSION_RATE, TRACK_STYLES, weekInSeason } from "./data.js";
+import { overallRating, growDriver, getDriverById, reliability, groupAverage, superStat } from "./driver.js";
 import { findTeamById, generateAIDriver, usedDriverNumbersInCategory } from "./team.js";
 import { refillScoutPool, repayLoan } from "./state.js";
 import { tickScoutPoolPoaching, tickFreeAgentPoaching, tickBenchedDriverDecay, bumpRivalReputation } from "./rivals.js";
-import { applyPoints, rolloverIfNeeded } from "./standings.js";
+import { applyPoints, recordRoundResult, rolloverIfNeeded } from "./standings.js";
 import { autoRevealCandidates, refillStaffPool, bestSkill } from "./staff.js";
 import { trainingGrowthMultiplier, totalUpkeep } from "./infrastructure.js";
 import { recordTransaction, recordBalanceSnapshot } from "./finance.js";
@@ -34,6 +34,18 @@ function participantScore(ratingValue, reliabilityValue, team, category, investm
   return ratingValue * 0.65 + carScore * 0.35 + investmentBonus + noise;
 }
 
+// A round's track style favors specific attributes (ex. Pluie on a rain round) — the bonus/malus
+// is relative to the crew's OWN general technique level, not an absolute value, so a driver
+// whose whole profile happens to sit high everywhere doesn't swing wildly, while a genuine
+// specialist (spiky attribute profile) is meaningfully advantaged or exposed by the round.
+function styleBonus(drivers, styleId) {
+  const style = TRACK_STYLES[styleId];
+  if (!style) return 0;
+  const styleAvg = crewAverage(drivers, (d) => style.attrs.reduce((sum, key) => sum + d.attributes[key], 0) / style.attrs.length);
+  const techAvg = crewAverage(drivers, (d) => groupAverage(d, "technique"));
+  return (styleAvg - techAvg) * 0.3;
+}
+
 function resultReputationDelta(position, gridSize) {
   if (position === 1) return 5;
   if (position <= 3) return 3;
@@ -59,16 +71,16 @@ function prizeForPosition(category, position, gridSize) {
   );
 }
 
-export function simulateCategoryRace(state, category, rng) {
+export function simulateCategoryRace(state, category, rng, roundIndex) {
   if (category.classes) {
     const logEntries = [];
     for (const cls of category.classes) {
       const classTeams = (state.teams[category.id] ?? []).filter((t) => t.subClass === cls.id);
-      logEntries.push(...simulateClassRace(state, category, classTeams, cls.id, rng));
+      logEntries.push(...simulateClassRace(state, category, classTeams, cls.id, rng, roundIndex));
     }
     return logEntries;
   }
-  return simulateClassRace(state, category, state.teams[category.id] ?? [], null, rng);
+  return simulateClassRace(state, category, state.teams[category.id] ?? [], null, rng, roundIndex);
 }
 
 function buildEntrants(state, teams, driversPerCar) {
@@ -111,9 +123,12 @@ function buildEntrants(state, teams, driversPerCar) {
   return entrants;
 }
 
-function simulateClassRace(state, category, teams, classId, rng) {
+function simulateClassRace(state, category, teams, classId, rng, roundIndex) {
   const entrants = buildEntrants(state, teams, category.driversPerCar ?? 1);
   if (entrants.length === 0) return [];
+
+  const styleId = category.roundStyles?.[roundIndex] ?? null;
+  const style = styleId ? TRACK_STYLES[styleId] : null;
 
   for (const e of entrants) {
     if (e.isPlayer && e.investment > 0) {
@@ -131,7 +146,7 @@ function simulateClassRace(state, category, teams, classId, rng) {
   const isEndurance = category.id === "wec";
   const scored = entrants.map((e) => {
     const physio = e.isPlayer ? physioReduction : 0;
-    const resistanceReduction = isEndurance ? (crewAverage(e.drivers, (d) => d.attributes.resistance) / 99) * 0.3 : 0;
+    const resistanceReduction = isEndurance ? (crewAverage(e.drivers, (d) => superStat(d, "resistance")) / 99) * 0.3 : 0;
     const reduction = 1 - (1 - physio) * (1 - resistanceReduction);
     const crewReliability = crewAverage(e.drivers, reliability);
     const dnf = rng() < dnfChance(crewReliability, reduction);
@@ -139,7 +154,8 @@ function simulateClassRace(state, category, teams, classId, rng) {
     // Form (0-100, neutral at 50) nudges race pace by up to ±4 points — a minor factor
     // next to the ~18-point noise spread, so it colours results without dominating them.
     const formBonus = (crewAverage(e.drivers, (d) => d.form ?? 50) - 50) / 50 * 4;
-    const score = dnf ? -Infinity : participantScore(crewRating, crewReliability, e.team, category, e.investment, rng) + formBonus;
+    const trackBonus = styleId ? styleBonus(e.drivers, styleId) : 0;
+    const score = dnf ? -Infinity : participantScore(crewRating, crewReliability, e.team, category, e.investment, rng) + formBonus + trackBonus;
     return { ...e, dnf, score };
   });
   scored.sort((a, b) => b.score - a.score);
@@ -156,6 +172,7 @@ function simulateClassRace(state, category, teams, classId, rng) {
       carClassification: category.carClassification === true,
     }
   );
+  recordRoundResult(state, category.id, classId, scored);
 
   const logEntries = [];
   const coachBonus = (bestSkill(state, "drivingCoach") / 95) * 0.3;
@@ -166,9 +183,18 @@ function simulateClassRace(state, category, teams, classId, rng) {
     const position = index + 1;
     const repDelta = e.dnf ? -1 : resultReputationDelta(position, gridSize);
 
+    // Tracked for EVERY entrant (not just the player's), unlike careerResults — lets the
+    // Championnats standings break a points tie (most commonly "nobody has scored yet") by
+    // best result instead of arbitrary team/seat order, without the memory cost of a full
+    // result history for the hundreds of AI drivers/teams in a category.
+    if (!e.dnf && e.team) {
+      e.team.bestPositionThisSeason = Math.min(e.team.bestPositionThisSeason ?? Infinity, position);
+    }
+
     for (const driver of e.drivers) {
       growDriver(driver, rng, e.isPlayer ? growthMultiplier : 1);
       driver.age += rng() < 0.02 ? 1 : 0;
+      if (!e.dnf) driver.bestPositionThisSeason = Math.min(driver.bestPositionThisSeason ?? Infinity, position);
 
       if (e.isPlayer && state.drivers.some((d) => d.id === driver.id)) {
         const relationshipDelta = raceRelationshipDelta(position, gridSize, e.dnf);
@@ -201,7 +227,7 @@ function simulateClassRace(state, category, teams, classId, rng) {
           driver,
           category,
           team: e.team,
-          result: { position, prize, dnf: e.dnf, gridSize },
+          result: { position, prize, dnf: e.dnf, gridSize, styleLabel: style?.label ?? null },
         });
       } else if (driver.agencyId) {
         bumpRivalReputation(state, driver.agencyId, repDelta);
@@ -301,8 +327,9 @@ function runWeekBody(state, rng) {
   const currentWeekInSeason = weekInSeason(state.week);
   const benched = resolveWeeklyConflicts(state, currentWeekInSeason, rng);
   for (const category of CATEGORIES) {
-    if (!category.calendar.includes(currentWeekInSeason)) continue;
-    logEntries.push(...simulateCategoryRace(state, category, rng));
+    const roundIndex = category.calendar.indexOf(currentWeekInSeason);
+    if (roundIndex === -1) continue;
+    logEntries.push(...simulateCategoryRace(state, category, rng, roundIndex));
   }
   restoreBenchedSeats(state, benched);
 

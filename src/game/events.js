@@ -1,5 +1,8 @@
 import { recordTransaction } from "./finance.js";
 import { POACH_WARNING_THRESHOLD, poachDriverAway } from "./rivals.js";
+import { averageDiscoverySkill, averagePrecisionSkill } from "./staff.js";
+import { generateScoutReveal } from "./scoutReveal.js";
+import { traitEventBias, staffTraitEventBias } from "./traits.js";
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -136,6 +139,7 @@ const INFO_EVENTS = [
       const candidates = state.scoutPool.filter((d) => !d.scouted);
       const driver = candidates[Math.floor(rng() * candidates.length)];
       driver.scouted = true;
+      driver.scoutReveal = generateScoutReveal(rng, averageDiscoverySkill(state), averagePrecisionSkill(state));
       return { tone: "good", title: "Tuyau de recruteur", text: `Un tuyau permet de scouter gratuitement ${driver.name}.` };
     },
   },
@@ -829,7 +833,13 @@ export function triggerRandomEvent(state, rng) {
 export function resolveEventChoice(state, rng, event, optionIndex) {
   const option = event.options[optionIndex];
   const driver = event.driverId ? state.drivers.find((d) => d.id === event.driverId) : null;
-  const success = rng() < option.successChance;
+  // Traits bias the success roll: the driver's own traits, plus every hired staff member's
+  // traits (a dilemma only ever targets a driver, never a staff member, so staff act here as
+  // a general support layer rather than the direct actor of the event) — both sources stack.
+  const driverBias = driver ? traitEventBias(driver, event.eventId) : 0;
+  const bias = driverBias + staffTraitEventBias(state, event.eventId);
+  const chance = clamp(option.successChance + bias, 0, 1);
+  const success = rng() < chance;
   const text = success
     ? option.onSuccess(state, rng, driver)
     : option.onFailure

@@ -8,6 +8,7 @@ import {
   getLastSlotId,
   listSaves,
   deleteSave,
+  renameSave,
   scoutDriver,
   deepScoutDriver,
   signDriver,
@@ -25,7 +26,7 @@ import { hireStaff, fireStaff } from "./game/staff.js";
 import { upgradeFacility, purchaseShopItem } from "./game/infrastructure.js";
 import { approachDriver } from "./game/recruit.js";
 import { beginWeek, continueWeekAfterChoice } from "./game/simulate.js";
-import { showToast, showConfirm, showEventModal } from "./ui/dialogs.js";
+import { showToast, showConfirm, showEventModal, showSaveBanner } from "./ui/dialogs.js";
 
 const COMPARE_MAX = 4;
 const SAVE_FAILED_MESSAGE =
@@ -137,6 +138,13 @@ app.addEventListener("click", (e) => {
           render();
         });
         return;
+      case "rename-save": {
+        const row = target.closest(".save-row");
+        const newName = row?.querySelector('[data-role="save-name"]')?.value.trim();
+        if (newName) renameSave(id, newName);
+        titleUi = { screen: "load", saves: listSaves() };
+        break;
+      }
       default:
         return;
     }
@@ -214,9 +222,14 @@ app.addEventListener("click", (e) => {
     case "fire-staff":
       fireStaff(state, Number(id));
       break;
-    case "upgrade-facility":
-      upgradeFacility(state, id, { force });
+    case "filter-staff-pool":
+      state.ui.staffFilter = { ...state.ui.staffFilter, role: id };
       break;
+    case "upgrade-facility": {
+      const result = upgradeFacility(state, id, { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
     case "take-loan": {
       const container = target.closest(".propose-box");
       const amount = Number(container?.querySelector('[data-role="loan-amount"]')?.value) || 0;
@@ -246,7 +259,7 @@ app.addEventListener("click", (e) => {
       return;
     case "save": {
       const saved = saveGame(state);
-      showToast(saved ? "Partie sauvegardée." : SAVE_FAILED_MESSAGE, saved ? "success" : "error");
+      showSaveBanner(saved ? "Partie sauvegardée." : SAVE_FAILED_MESSAGE, saved ? "success" : "error");
       break;
     }
     case "main-menu":
@@ -288,6 +301,7 @@ app.addEventListener("click", (e) => {
     }
     case "focus-category":
       state.ui.focusedCategoryId = id;
+      state.ui.focusedSeasonNumber = null;
       break;
     case "finance-window":
       state.ui.financeWindow = id;
@@ -330,10 +344,22 @@ app.addEventListener("click", (e) => {
       state.ui.viewingDriverId = Number(id);
       state.ui.driverDetailOrigin = state.ui.activeMenu;
       state.ui.activeMenu = "driver-detail";
+      state.ui.viewingDriverSeason = null;
       break;
     case "back-to-roster":
       state.ui.activeMenu = state.ui.driverDetailOrigin ?? "mes-pilotes";
+      state.ui.viewingDriverSeason = null;
       break;
+    case "view-driver-season": {
+      const seasonNumber = Number(id);
+      const categoryId = target.dataset.categoryId;
+      const classId = target.dataset.classId || null;
+      const current = state.ui.viewingDriverSeason;
+      // Clicking the already-open season again collapses the detail block (toggle).
+      const isSame = current && current.seasonNumber === seasonNumber && current.categoryId === categoryId && current.classId === classId;
+      state.ui.viewingDriverSeason = isSame ? null : { seasonNumber, categoryId, classId };
+      break;
+    }
     case "toggle-compare-driver": {
       const ids = state.ui.compareDriverIds ?? (state.ui.compareDriverIds = []);
       const numId = Number(id);
@@ -392,6 +418,15 @@ app.addEventListener("change", (e) => {
   } else if (action === "filter-world-staff-max-wage") {
     state.ui.worldStaffFilter = { ...state.ui.worldStaffFilter, maxWage: Number(target.value) || 0 };
     state.ui.worldStaffPage = 0;
+    render();
+  } else if (action === "filter-staff-pool-min-primary") {
+    state.ui.staffFilter = { ...state.ui.staffFilter, minPrimary: Number(target.value) || 0 };
+    render();
+  } else if (action === "filter-staff-pool-max-wage") {
+    state.ui.staffFilter = { ...state.ui.staffFilter, maxWage: Number(target.value) || 0 };
+    render();
+  } else if (action === "select-season") {
+    state.ui.focusedSeasonNumber = target.value === "live" ? null : Number(target.value);
     render();
   }
 });

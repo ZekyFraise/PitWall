@@ -25,10 +25,13 @@ const NAME_PREFIXES = [
   "Apex", "Nordwind", "Vector", "Ignis", "Falcon", "Meridian", "Titan", "Volt",
   "Raptor", "Solstice", "Crimson", "Silverline", "Kinetic", "Obsidian", "Zenith",
   "Vertex", "Comet", "Aurora", "Tempest", "Quartz",
+  "Onyx", "Radiant", "Eclipse", "Phantom", "Wraith", "Catalyst", "Nova", "Orbit",
+  "Paragon", "Lumen", "Griffin", "Sentinel", "Cobalt", "Aegis", "Cipher",
 ];
 const NAME_SUFFIXES = [
   "Racing", "Motorsport", "Competizione", "Racing Team", "GP", "Performance",
   "Dynamics", "Speedworks", "Works",
+  "Engineering", "Motors", "Racing Squad", "Autosport",
 ];
 
 function generateTeamName(rng, usedNames) {
@@ -456,6 +459,7 @@ export function recordSeasonStint(state, driver) {
   driver.seasonHistory.push({
     seasonNumber: standings?.seasonNumber ?? 1,
     categoryId: driver.categoryId,
+    classId: oldTeam?.subClass ?? null,
     teamName: oldTeam ? oldTeam.name : "Écurie précédente",
     rating: Math.round(rating),
     value,

@@ -1,8 +1,10 @@
-import { CATEGORIES, CATEGORY_BY_ID } from "../../game/data.js";
+import { CATEGORIES, CATEGORY_BY_ID, TRACK_STYLES } from "../../game/data.js";
 import { getDriverById, overallRating } from "../../game/driver.js";
 import { rosterCapacity } from "../../game/infrastructure.js";
 import { approachTerms } from "../../game/recruit.js";
 import { ROLES } from "../../game/staff.js";
+import { POINTS_TABLE } from "../../game/standings.js";
+import { STAFF_TRAITS, staffTraitTooltip } from "../../game/traits.js";
 
 const STAFF_ROLE_CATEGORY = {
   recruiter: "Sportif",
@@ -49,83 +51,246 @@ function statusTag(state, driver) {
   return `<span class="pill muted">Indépendant</span>`;
 }
 
+// Wikipedia-F1-style round-by-round grid: one column per round showing each entrant's
+// classification (position, or "Ret" if they retired), a "—" for a round not yet run (live
+// season) or not entered at all, plus a final cumulative points column. Same rendering works
+// for the live in-progress season and any archived past season (state.seasonArchive) since
+// both share the exact shape { seasonNumber, driverPoints, teamPoints, carPoints, rounds }.
+
+function lastKnownEntrant(rounds, driverId) {
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const found = rounds[i].find((e) => e.driverIds.includes(driverId));
+    if (found) return found;
+  }
+  return null;
+}
+
+function lastKnownCarEntrant(rounds, carId) {
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const found = rounds[i].find((e) => e.carId === carId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function bestClassifiedPosition(rounds, matches) {
+  return rounds.reduce((best, round) => {
+    const idx = round.findIndex((e) => !e.dnf && matches(e));
+    return idx === -1 ? best : Math.min(best, idx + 1);
+  }, Infinity);
+}
+
+function driverRoundCell(rounds, roundIndex, driverId) {
+  const round = rounds[roundIndex];
+  if (!round) return `<td class="muted">—</td>`;
+  const entry = round.find((e) => e.driverIds.includes(driverId));
+  if (!entry) return `<td class="muted">—</td>`;
+  if (entry.dnf) return `<td class="warn">Ret</td>`;
+  return `<td>${round.indexOf(entry) + 1}</td>`;
+}
+
+function carRoundCell(rounds, roundIndex, carId) {
+  const round = rounds[roundIndex];
+  if (!round) return `<td class="muted">—</td>`;
+  const idx = round.findIndex((e) => e.carId === carId);
+  if (idx === -1) return `<td class="muted">—</td>`;
+  if (round[idx].dnf) return `<td class="warn">Ret</td>`;
+  return `<td>${idx + 1}</td>`;
+}
+
+// Round-derived carNumber is only known once at least one round has been captured this season
+// (state.seasonArchive/standings.rounds) — for a brand-new live season with 0 races run yet,
+// fall back to the team's own live carNumbers so the row isn't left without a car number.
+function liveCarNumber(teamById, carId) {
+  const [teamIdStr, carIndexStr] = carId.split(":");
+  const team = teamById.get(Number(teamIdStr));
+  return team?.carNumbers?.[Number(carIndexStr)] ?? null;
+}
+
+function teamRoundPoints(round, teamId, constructorsTopN) {
+  if (!round) return null;
+  let count = 0;
+  let sum = 0;
+  round.forEach((e, idx) => {
+    if (e.teamId !== teamId) return;
+    const pts = POINTS_TABLE[idx] ?? 0;
+    if (pts === 0 || count >= constructorsTopN) return;
+    sum += pts;
+    count += 1;
+  });
+  return sum;
+}
+
+function teamRoundCell(rounds, roundIndex, teamId, constructorsTopN) {
+  const pts = teamRoundPoints(rounds[roundIndex], teamId, constructorsTopN);
+  return pts === null ? `<td class="muted">—</td>` : `<td>${pts}</td>`;
+}
+
+function roundHeaderCells(category, roundCount) {
+  let cells = "";
+  for (let i = 0; i < roundCount; i++) {
+    const styleId = category.roundStyles?.[i];
+    const styleLabel = styleId ? TRACK_STYLES[styleId]?.label : null;
+    cells += `<th${styleLabel ? ` title="${styleLabel}"` : ""}>R${i + 1}</th>`;
+  }
+  return cells;
+}
+
 function classificationBlock(state, category, classId, label) {
   const key = classId ? `${category.id}:${classId}` : category.id;
-  const standings = state.standings[key] ?? { race: 0, seasonNumber: 1, driverPoints: {}, teamPoints: {}, carPoints: {} };
+  const liveStandings = state.standings[key] ?? { race: 0, seasonNumber: 1, driverPoints: {}, teamPoints: {}, carPoints: {}, rounds: [] };
+  const focusedSeason = state.ui.focusedSeasonNumber;
+  const archivedSeason = focusedSeason != null
+    ? (state.seasonArchive?.[key] ?? []).find((s) => s.seasonNumber === focusedSeason)
+    : null;
+  const standings = archivedSeason ?? liveStandings;
+  const isLive = !archivedSeason;
+  const rounds = standings.rounds ?? [];
+
   const classTeams = classId
-    ? (state.teams[category.id] ?? []).filter((t) => t.class === classId)
+    ? (state.teams[category.id] ?? []).filter((t) => t.subClass === classId)
     : state.teams[category.id] ?? [];
   const carClassification = category.carClassification === true;
   const constructorsEnabled = category.constructorsEnabled !== false;
+  const constructorsTopN = category.constructorsTopN ?? Infinity;
   const suffix = label ? `— ${label}` : `— ${category.name}`;
+  const teamNameById = new Map(classTeams.map((t) => [t.id, t.name]));
+  const teamById = new Map(classTeams.map((t) => [t.id, t]));
 
-  const allDrivers = [];
-  for (const team of classTeams) {
-    for (const seat of team.seats) {
-      if (seat.driverId == null) continue;
-      const driver = getDriverById(state, seat.driverId);
-      if (driver) allDrivers.push(driver);
+  // Driver rows: currently-seated roster (live only) UNION any driver who appeared in at least
+  // one round this season — keeps a driver who left mid-season visible instead of vanishing
+  // outright, and is the ONLY source of rows once viewing an archived (no longer current) season.
+  const driverIds = new Set();
+  if (isLive) {
+    for (const team of classTeams) {
+      for (const seat of team.seats) {
+        if (seat.driverId != null) driverIds.add(seat.driverId);
+      }
     }
   }
-  const driverRows = allDrivers
-    .map((driver) => ({ driver, pts: standings.driverPoints[driver.id] ?? 0 }))
-    .sort((a, b) => b.pts - a.pts)
-    .map(({ driver, pts }, i) => {
-      const isPlayer = state.drivers.some((d) => d.id === driver.id);
-      const number = driver.raceNumber != null ? `#${driver.raceNumber} ` : "";
-      return `<tr class="${isPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${number}${driver.name} ${driverIdTag(driver)}</td><td>${pts}</td></tr>`;
-    })
-    .join("");
-
-  const teamRows = classTeams
-    .map((team) => ({ team, pts: standings.teamPoints[team.id] ?? 0 }))
-    .sort((a, b) => b.pts - a.pts)
-    .map(({ team, pts }, i) => {
-      const hasPlayer = team.seats.some((s) => state.drivers.some((d) => d.id === s.driverId));
-      return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${team.name}</td><td>${pts}</td></tr>`;
-    })
-    .join("");
-
-  const allCars = [];
-  for (const team of classTeams) {
-    const carIndices = new Set(team.seats.map((s) => s.carIndex ?? 0));
-    for (const carIndex of carIndices) allCars.push({ team, carIndex });
+  for (const round of rounds) {
+    for (const e of round) {
+      for (const id of e.driverIds) driverIds.add(id);
+    }
   }
-  const carRows = allCars
-    .map(({ team, carIndex }) => ({ team, carIndex, pts: standings.carPoints?.[`${team.id}:${carIndex}`] ?? 0 }))
-    .sort((a, b) => b.pts - a.pts)
-    .map(({ team, carIndex, pts }, i) => {
-      const number = team.carNumbers?.[carIndex];
-      const hasPlayer = team.seats.some(
-        (s) => s.carIndex === carIndex && state.drivers.some((d) => d.id === s.driverId)
-      );
-      return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${team.name} ${number != null ? `#${number}` : ""}</td><td>${pts}</td></tr>`;
+
+  const driverRows = [...driverIds]
+    .map((id) => {
+      const last = lastKnownEntrant(rounds, id);
+      const name = last ? last.driverNames[last.driverIds.indexOf(id)] : (getDriverById(state, id)?.name ?? `#${id}`);
+      const pts = standings.driverPoints[id] ?? 0;
+      const bestPosition = bestClassifiedPosition(rounds, (e) => e.driverIds.includes(id));
+      return { id, name, pts, bestPosition };
+    })
+    .sort((a, b) => b.pts - a.pts || a.bestPosition - b.bestPosition)
+    .map(({ id, name, pts }, i) => {
+      const isPlayer = state.drivers.some((d) => d.id === id);
+      let cells = "";
+      for (let r = 0; r < category.roundCount; r++) cells += driverRoundCell(rounds, r, id);
+      return `<tr class="${isPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${name} ${driverIdTag({ id })}</td>${cells}<td>${pts}</td></tr>`;
     })
     .join("");
 
-  const secondaryBlock = carClassification
-    ? `<div>
-        <h3>Voitures ${suffix}</h3>
-        <table class="table"><tbody>${carRows || `<tr><td class="muted">Pas encore de course.</td></tr>`}</tbody></table>
+  let secondaryRows = "";
+  let secondaryHeading = "";
+  if (carClassification) {
+    secondaryHeading = `Voitures ${suffix}`;
+    const carIds = new Set();
+    if (isLive) {
+      for (const team of classTeams) {
+        const carIndices = new Set(team.seats.map((s) => s.carIndex ?? 0));
+        for (const carIndex of carIndices) carIds.add(`${team.id}:${carIndex}`);
+      }
+    }
+    for (const round of rounds) {
+      for (const e of round) {
+        if (e.carId) carIds.add(e.carId);
+      }
+    }
+    secondaryRows = [...carIds]
+      .map((carId) => {
+        const last = lastKnownCarEntrant(rounds, carId);
+        const pts = standings.carPoints?.[carId] ?? 0;
+        const bestPosition = bestClassifiedPosition(rounds, (e) => e.carId === carId);
+        return { carId, last, pts, bestPosition };
+      })
+      .sort((a, b) => b.pts - a.pts || a.bestPosition - b.bestPosition)
+      .map(({ carId, last, pts }, i) => {
+        const hasPlayer = isLive && classTeams.some((t) => t.seats.some((s) => `${t.id}:${s.carIndex ?? 0}` === carId && state.drivers.some((d) => d.id === s.driverId)));
+        const teamName = last?.teamName ?? teamNameById.get(Number(carId.split(":")[0])) ?? "—";
+        const carNumber = last?.carNumber ?? (isLive ? liveCarNumber(teamById, carId) : null);
+        const numberLabel = carNumber != null ? ` #${carNumber}` : "";
+        let cells = "";
+        for (let r = 0; r < category.roundCount; r++) cells += carRoundCell(rounds, r, carId);
+        return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${teamName}${numberLabel}</td>${cells}<td>${pts}</td></tr>`;
+      })
+      .join("");
+  } else if (constructorsEnabled) {
+    secondaryHeading = `Écuries ${suffix}`;
+    const teamIds = new Set();
+    if (isLive) for (const team of classTeams) teamIds.add(team.id);
+    for (const round of rounds) for (const e of round) teamIds.add(e.teamId);
+    secondaryRows = [...teamIds]
+      .map((teamId) => {
+        const pts = standings.teamPoints[teamId] ?? 0;
+        const bestPosition = bestClassifiedPosition(rounds, (e) => e.teamId === teamId);
+        return { teamId, pts, bestPosition };
+      })
+      .sort((a, b) => b.pts - a.pts || a.bestPosition - b.bestPosition)
+      .map(({ teamId, pts }, i) => {
+        const hasPlayer = isLive && classTeams.some((t) => t.id === teamId && t.seats.some((s) => state.drivers.some((d) => d.id === s.driverId)));
+        const teamName = teamNameById.get(teamId) ?? "—";
+        let cells = "";
+        for (let r = 0; r < category.roundCount; r++) cells += teamRoundCell(rounds, r, teamId, constructorsTopN);
+        return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${teamName}</td>${cells}<td>${pts}</td></tr>`;
+      })
+      .join("");
+  }
+
+  const headerCells = roundHeaderCells(category, category.roundCount);
+  const secondaryBlock = secondaryHeading
+    ? `<h3>${secondaryHeading}</h3>
+      <div class="table-scroll">
+        <table class="table wide">
+          <thead><tr><th>Pos.</th><th>Écurie</th>${headerCells}<th>Pts</th></tr></thead>
+          <tbody>${secondaryRows || `<tr><td class="muted" colspan="${category.roundCount + 3}">Pas encore de course.</td></tr>`}</tbody>
+        </table>
       </div>`
-    : constructorsEnabled
-      ? `<div>
-        <h3>Écuries ${suffix}</h3>
-        <table class="table"><tbody>${teamRows || `<tr><td class="muted">Pas encore de course.</td></tr>`}</tbody></table>
-      </div>`
-      : `<div class="muted">Pas de championnat constructeurs pour cette catégorie.</div>`;
+    : `<div class="muted">Pas de championnat constructeurs pour cette catégorie.</div>`;
+
+  const seasonLine = isLive
+    ? `Saison ${standings.seasonNumber} · Manche ${standings.race}/${category.roundCount}`
+    : `Saison ${standings.seasonNumber} · Terminée (${rounds.length}/${category.roundCount} manches)`;
 
   return `
     ${label ? `<h3 class="class-heading">${label}</h3>` : ""}
-    <div class="standings-grid">
-      <div>
-        <h3>Pilotes ${suffix}</h3>
-        <table class="table"><tbody>${driverRows || `<tr><td class="muted">Pas encore de course.</td></tr>`}</tbody></table>
-      </div>
-      ${secondaryBlock}
+    <h3>Pilotes ${suffix}</h3>
+    <div class="table-scroll">
+      <table class="table wide">
+        <thead><tr><th>Pos.</th><th>Pilote</th>${headerCells}<th>Pts</th></tr></thead>
+        <tbody>${driverRows || `<tr><td class="muted" colspan="${category.roundCount + 3}">Pas encore de course.</td></tr>`}</tbody>
+      </table>
     </div>
-    <div class="muted season-line">Saison ${standings.seasonNumber} · Manche ${standings.race}/${category.roundCount}</div>
+    ${secondaryBlock}
+    <div class="muted season-line">${seasonLine}</div>
   `;
+}
+
+function seasonSelectHtml(state, category) {
+  const representativeKey = category.classes ? `${category.id}:${category.classes[0].id}` : category.id;
+  const liveSeasonNumber = state.standings[representativeKey]?.seasonNumber ?? 1;
+  const archivedSeasons = (state.seasonArchive?.[representativeKey] ?? [])
+    .map((s) => s.seasonNumber)
+    .sort((a, b) => b - a);
+  const focused = state.ui.focusedSeasonNumber;
+  const liveOption = `<option value="live" ${focused == null ? "selected" : ""}>Saison ${liveSeasonNumber} (en cours)</option>`;
+  const archivedOptions = archivedSeasons
+    .map((n) => `<option value="${n}" ${focused === n ? "selected" : ""}>Saison ${n}</option>`)
+    .join("");
+  return `
+    <div class="filter-row">
+      <label>Saison <select data-action="select-season">${liveOption}${archivedOptions}</select></label>
+    </div>`;
 }
 
 export function renderWorldChampionships(state) {
@@ -137,6 +302,7 @@ export function renderWorldChampionships(state) {
   return `
     <h2>Monde — Championnats</h2>
     <div class="tabs">${categoryTabs(state)}</div>
+    ${seasonSelectHtml(state, category)}
     ${body}
   `;
 }
@@ -195,7 +361,7 @@ export function renderWorldDrivers(state) {
   const rowsHtml = rows
     .map(
       ({ driver, team, category }) => `
-      <tr>
+      <tr data-action="view-driver" data-id="${driver.id}" class="clickable-row">
         <td>${driver.raceNumber != null ? `#${driver.raceNumber}` : "—"}</td>
         <td>${driver.name} ${driverIdTag(driver)}</td>
         <td>${driver.age}</td>
@@ -408,6 +574,9 @@ export function renderWorldStaff(state) {
       const actionHtml = !hired && !owner
         ? `<button data-action="hire-staff" data-id="${member.id}" class="small">Recruter (${member.hireCost.toLocaleString("fr-FR")}€)</button>`
         : "";
+      const traitsHtml = (member.traits ?? [])
+        .map((id) => `<span class="pill" title="${staffTraitTooltip(id)}">${STAFF_TRAITS[id].label}</span>`)
+        .join(" ");
       return `
       <tr>
         <td>${member.name}</td>
@@ -415,6 +584,7 @@ export function renderWorldStaff(state) {
         <td title="${role.description}">${role.name}</td>
         <td>${member.skills.primary}</td>
         <td>${member.skills.secondary}</td>
+        <td>${traitsHtml}</td>
         <td>${member.weeklyWage.toLocaleString("fr-FR")}€</td>
         <td>${statusHtml}</td>
         <td>${actionHtml}</td>
@@ -444,10 +614,11 @@ export function renderWorldStaff(state) {
           ${staffSortHeader(state, "role", "Rôle")}
           ${staffSortHeader(state, "primary", "Compétence principale")}
           <th>Compétence secondaire</th>
+          <th>Traits</th>
           ${staffSortHeader(state, "wage", "Salaire")}
           <th>Statut</th><th>Action</th>
         </tr></thead>
-        <tbody>${rowsHtml || `<tr><td class="muted" colspan="8">Aucun membre de staff.</td></tr>`}</tbody>
+        <tbody>${rowsHtml || `<tr><td class="muted" colspan="9">Aucun membre de staff.</td></tr>`}</tbody>
       </table>
     </div>
     ${paginationHtml}`;

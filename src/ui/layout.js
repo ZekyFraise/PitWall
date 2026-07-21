@@ -1,4 +1,4 @@
-import { CATEGORIES, SEASON_WEEKS, weekInSeason, SILLY_SEASON_WEEKS, WINTER_MERCATO_WEEKS } from "../game/data.js";
+import { CATEGORIES, SEASON_WEEKS, weekInSeason, SILLY_SEASON_WEEKS, WINTER_MERCATO_WEEKS, TRACK_STYLES } from "../game/data.js";
 
 export const NAV = [
   { id: "mes-pilotes", label: "Mes pilotes" },
@@ -8,6 +8,7 @@ export const NAV = [
   { id: "investissement", label: "Investissement" },
   { id: "nouveautes", label: "Nouveautés" },
   { id: "resultats", label: "Résultats" },
+  { id: "palmares", label: "Palmarès" },
   {
     id: "monde",
     label: "Monde",
@@ -63,7 +64,11 @@ function renderNav(state) {
 function weekPhaseLabel(weekNum) {
   if (WINTER_MERCATO_WEEKS.includes(weekNum)) return "Mercato hivernal";
   if (SILLY_SEASON_WEEKS.includes(weekNum)) return "Silly season";
-  const racing = CATEGORIES.filter((c) => c.calendar.includes(weekNum)).map((c) => c.name);
+  const racing = CATEGORIES.filter((c) => c.calendar.includes(weekNum)).map((c) => {
+    const roundIndex = c.calendar.indexOf(weekNum);
+    const styleLabel = TRACK_STYLES[c.roundStyles?.[roundIndex]]?.label;
+    return styleLabel ? `${c.name} (${styleLabel})` : c.name;
+  });
   return racing.length ? `Courses cette semaine : ${racing.join(", ")}` : "Semaine calme — aucune course";
 }
 

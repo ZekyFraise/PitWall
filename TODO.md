@@ -17,20 +17,105 @@
 
 - ⏳ **Académies de pilote** : relation avec une académie, mécanique de formation dédiée —
   fonctionnalité entièrement nouvelle, jamais commencée.
-- ⏳ **Super statistiques — remodelage de l'indice de performance** *(chat)* : regrouper les
-  attributs actuels en « super statistiques » (type Rythme/Régularité déjà affichées dans
-  Talents) qui détermineraient l'Overall du pilote et ses résultats, plutôt que la moyenne
-  pondérée actuelle (`overallRating`/`reliability` dans `driver.js`). Portée et liste exacte
-  des super stats pas encore précisées.
-- ⏳ **Circuits et styles de piste influant sur la performance** *(chat)* : attribuer à chaque
-  circuit/manche un style (rapide, technique, pluvieux, usant en pneus...) qui ferait varier
-  la performance d'un pilote selon SES attributs (ex. fort en Pluie → avantagé sur un circuit
-  pluvieux), au lieu du bruit aléatoire uniforme actuel (`simulate.js` `participantScore`).
-  Dépend probablement du remodelage des super statistiques ci-dessus.
-- ⏳ **Équilibrer la progression de stats** *(chat)* : la montée en niveau doit être répartie
-  entre le niveau actuel du pilote, son potentiel, et l'âge prévu de son peak — revoir
-  `growDriver` (`driver.js`) qui n'utilise aujourd'hui qu'une marge (`growthCeiling - rating`)
-  et l'âge de peak séparément.
+- ✅ **Super statistiques — remodelage de l'indice de performance** *(chat)* : refonte
+  mécanique complète (choisie explicitement par le joueur, pas juste un habillage
+  d'affichage). Les 32 attributs bruts (`ATTRIBUTE_META`) restent la couche de génération/
+  progression/scouting (préserve la profondeur du scouting par attribut et la dérive
+  individuelle voulue dans `generateDriver`), mais 5 nouvelles super stats
+  (`SUPER_STATS`/`superStat`, `driver.js`) — Rythme, Régularité, Résistance, Adaptabilité,
+  Instinct, chacune une moyenne de 5-6 attributs bruts — deviennent les vrais inputs :
+  `overallRating`/`reliability` gardent leur nom/signature mais sont entièrement recalculées
+  à partir des super stats au lieu de l'ancienne moyenne technique/mental/physique/discipline,
+  ce qui propage le changement à TOUT ce qui les consomme (score de course, valeur marchande,
+  coût de baquet, négociation, débauchage, progression) sans toucher ces fichiers. Pondération
+  par catégorie (circuit/endurance/rallye) conservée, juste redistribuée sur les nouvelles
+  stats (`OVERALL_WEIGHTS_BY_PROFILE`). `simulate.js` : réduction de DNF en endurance basée
+  sur la nouvelle stat Résistance au lieu du seul attribut brut isolé. UI (`agency.js`) : les
+  5 super stats affichées avec tooltip listant leurs attributs composants (Talents, fiche
+  pilote non signée, comparaison), même gating scouté/non-scouté que l'existant. Aucun bump
+  de schéma (seules les fonctions de calcul changent, pas la forme des données). Vérifié par
+  16 tests Node isolés (profil "pointu" vs équilibré, différenciation par catégorie, simulation
+  sans erreur) et en jeu (Talents, fiche pilote signée/attributs, Mes pilotes).
+  - ✅ **"Mes pilotes" — afficher les super stats sur la fiche détaillée d'un pilote signé**
+    *(chat)* : `renderDriverDetail` (agency.js) branche désormais un encart dédié pour les
+    super stats — mêmes fiches concernées : signée (`renderDriverDetail`) et non signée
+    (`prospectDetail`). Passe finale demandée en chat : nouveau `superStatSection` remplace
+    l'affichage en ligne (`superStatsLine`) par des barres de statistique identiques aux
+    attributs classiques (`statBar`), regroupées dans un encart séparé ("Super statistiques")
+    placé juste au-dessus de la carte "Attributs" — titre `<h3>` sorti de l'encart (même
+    convention que "Attributs"/"Traits"/"Historique", ce qui crée aussi l'écart visuel demandé
+    au-dessus, ex. avec "Chercher une écurie"), et les 5 stats réparties sur 2 colonnes en
+    réutilisant la grille 2 colonnes existante de `.attributes-card`. Gating scouté/signé
+    inchangé (barres vides + "?" tant que non scouté). Vérifié en jeu (1280px, fiche non
+    signée et fiche signée) : titre au-dessus de l'encart, écart net avec la section
+    précédente, 5 barres sur 2 colonnes (3 + 2), aucune erreur console.
+- ✅ **Circuits et styles de piste influant sur la performance** *(chat)* : chaque manche a
+  désormais un style (`TRACK_STYLES` dans `data.js` — Rapide, Technique, Pluvieux, Usant en
+  pneus, Bagarre ; cycle fixe par index de manche, `category.roundStyles`, même logique que le
+  calendrier lui-même — statique, pas semé par partie). Un bonus/malus (`styleBonus`,
+  `simulate.js`) est ajouté au score de course, calculé à partir des attributs propres au
+  style RELATIVEMENT au niveau technique général du pilote (donc un profil "pointu" est
+  vraiment avantagé/pénalisé, un profil plat ne bouge presque pas). N'a pas attendu le
+  remodelage des super statistiques — implémenté directement sur les attributs individuels
+  existants. Le style de chaque manche est visible dans le libellé "Courses cette semaine"
+  (topbar) et dans le journal "Résultats" pour les courses du joueur. Vérifié : un pilote
+  fabriqué avec Pluie/Évitement très hauts (reste à 40) obtient une meilleure position moyenne
+  qu'un pilote symétriquement faible en Pluie, spécifiquement sur les manches "Pluvieux"
+  (7.8 vs 12.0 sur 4 échantillons) ; vérification formule directe : écart de ~17 points de
+  score en faveur du spécialiste sur une manche pluvieuse.
+- ✅ **Traits** *(chat)* : nouveau fichier `src/game/traits.js` — 14 traits pilote
+  (`DRIVER_TRAITS`, 2 par super stat : un bonus, un malus, plus quelques traits mixtes
+  stats+dilemme ou dilemme seul, ex. Casse-cou/+Instinct, Pilote de pluie/+Adaptabilité,
+  Charismatique/+15% sur les dilemmes médias-sponsors) et 10 traits staff (`STAFF_TRAITS`,
+  bonus/malus de -5 à +7 sur la compétence principale ; 4 d'entre eux — Mentor, Vétéran, Beau
+  parleur, Bon communicant — biaisent aussi certains dilemmes). Fixés à la génération
+  (`assignDriverTraits`/`assignStaffTraits`, dernier champ consommant du rng pour ne pas
+  décaler la séquence existante) : 0-2 traits pour un pilote (~20/65/15%), 0-1 pour le staff.
+  Cachés pour un pilote non signé jusqu'au scouting approfondi (`scoutReveal.traitsKnown`,
+  même convention que `potentialKnown`), visibles sans condition pour un pilote signé et pour
+  tout le staff (qui n'a aucun système de scouting). `superStat` (`driver.js`) applique le
+  bonus de stat avec clamp [0,99] — `overallRating`/`reliability` en héritent automatiquement.
+  `bestSkill` (`staff.js`) applique le bonus de compétence avec le même clamp. `resolveEventChoice`
+  (`events.js`) décale `option.successChance` de la somme du biais du pilote concerné ET de
+  TOUT le staff engagé (un dilemme ne cible jamais un membre du staff, qui agit donc comme un
+  soutien global plutôt que l'acteur direct) — les deux sources s'additionnent. UI : 3 sites
+  remplacent le stub "Aucun trait pour l'instant" (`prospectDetail`, `renderDriverDetail`,
+  `compareDriverColumn`, avec le même gating que le potentiel dans chacun), `staffCard`
+  (agence) et `renderWorldStaff` (Monde ▸ Staff, nouvelle colonne) affichent les traits de
+  staff sans condition. Aucun bump de `SCHEMA_VERSION` (champs additifs `traits`/`traitsKnown`,
+  backfillés par `?? []`/optional chaining, même convention que `seasonArchive`/
+  `championsHistory`). Vérifié par ~6000 assertions Node isolées (distribution des traits,
+  bonus de super stat clampé, bonus de compétence clampé, biais pilote sur `resolveEventChoice`,
+  biais staff global + cumul des deux) et en jeu (fiche non signée avant/après scouting
+  approfondi, fiche signée, comparaison, carte Staff, Monde ▸ Staff), aucune erreur console.
+  - ✅ **Tooltip détaillé (stat + montant)** *(chat)* : le tooltip de chaque trait affiche
+    désormais explicitement l'effet mécanique en plus de la description — `driverTraitTooltip`/
+    `staffTraitTooltip` (`traits.js`) ajoutent "Rythme +4", "Compétence principale +5", ou
+    "Dilemme « Négociation salariale » +10%" selon `statEffects`/`skillBonus`/`eventBias`.
+    Bug trouvé et corrigé au passage : les noms de dilemme étaient entourés de guillemets
+    droits (`"..."`) alors que le tooltip est injecté dans un attribut HTML `title="..."` —
+    un guillemet droit fermait prématurément l'attribut et tronquait/corrompait le tooltip
+    (repéré sur "Mentor" en jeu). Remplacé par des guillemets français (« »). Vérifié en jeu :
+    tooltip complet et bien formé sur une pilule de trait pilote et une pilule de trait staff,
+    aucune erreur console.
+  - ⏳ **Traits acquis dynamiquement en cours de carrière** *(chat)* : au-delà de la première
+    passe (traits fixes à la génération), certains traits pourraient être gagnés/remplacés en
+    cours de carrière via des événements ou seuils de progression — avec une distinction entre
+    traits "irremplaçables" (permanents, posés à la génération) et traits pouvant être acquis/
+    remplacés dynamiquement plus tard. Portée exacte (déclencheurs, quels traits sont de quel
+    type) pas encore précisée — explicitement différée après la première passe.
+- ✅ **Équilibrer la progression de stats** *(chat)* : `growDriver` (`driver.js`) combine
+  désormais 3 facteurs au lieu de la seule marge `growthCeiling - rating` : la marge restante
+  (inchangée), un `ageFactor` (proximité de l'âge de peak — la progression est la plus rapide
+  tôt en carrière et se réduit progressivement à l'approche du peak, plafonné à 1.3x à 10 ans+
+  du peak, plancher à 0.3x juste avant, au lieu d'un rythme plat jusqu'à la coupure), et un
+  `potentialFactor` (un pilote à fort potentiel apprend un peu plus vite en plus d'avoir un
+  plafond plus haut, ~0.97x à ~1.15x selon le potentiel). Le déclin après le peak (`age >
+  peak + 3`) reste inchangé (la demande portait sur "la montée en niveau", pas le déclin).
+  Vérifié par 4 tests Node isolés (jeune pilote progresse plus vite qu'un pilote proche du
+  peak à marge égale, fort potentiel progresse plus vite à marge/âge égaux, progression
+  toujours nulle pile à l'âge de peak, valeurs bornées [0,99] sur 200 semaines) et par une
+  simulation de 300 semaines sans erreur (des centaines de pilotes IA/joueur).
 - ✅ **Contre-offre + patience lors de la revalorisation du contrat agence** *(chat)* : le
   pilote a désormais une fenêtre d'exigences indicative (`contractBaseline`) et un champ
   `negotiationPatience` (0-100, régénère +3/sem) qui baisse plus vite plus l'offre s'éloigne
@@ -69,11 +154,18 @@
   (`offersSection`, `agency.js`). Écrasement de l'ancien baquet lors d'un changement d'écurie :
   confirmé sans bug après analyse détaillée de `assignSeat`/`releaseSeatAndBackfill` — aucun
   changement nécessaire.
-- ⏳ **Logique d'attribution des noms et du sexe** *(chat)* : Attribuer des prénoms masculins/féminins
-  a des personnages masculins/féminins. Ne pas mélanger
-- ⏳ **Agrandir la base de prénoms/noms de famille/noms d'équipe/noms d'agence** *(chat)* :
-  plus de diversité, les mêmes noms reviennent trop souvent avec des centaines de pilotes/staff
-  générés (`FIRST_NAMES`/`LAST_NAMES` dans `data.js`).
+- ✅ **Logique d'attribution des noms et du sexe** *(chat)* : `randomName` (data.js) tirait un
+  prénom dans un seul pool mixte, indépendamment du `sex` du personnage (déterminé après coup
+  dans `generateDriver`) — un pilote "F" pouvait s'appeler "Lucas". `FIRST_NAMES` séparé en
+  `FIRST_NAMES_M`/`FIRST_NAMES_F` ; `generateDriver` calcule `sex` en premier puis appelle
+  `randomName(rng, sex)`. Le staff n'a pas de champ `sex` affiché nulle part, donc
+  `randomName(rng)` sans argument reste inchangé pour lui (pool combiné). Vérifié : 0 incohérence
+  sur 308 pilotes générés (agence + vivier + IA).
+- ✅ **Agrandir la base de prénoms/noms de famille/noms d'équipe/noms d'agence** *(chat)* :
+  `FIRST_NAMES_M`/`FIRST_NAMES_F` passés de 30 (mixte) à 40+40, `LAST_NAMES` de 24 à 50,
+  `NAME_PREFIXES`/`NAME_SUFFIXES` (noms d'écurie, `team.js`) de 20×9=180 à 35×13=455
+  combinaisons (`data.js`/`team.js`). Noms d'agence (`RIVAL_AGENCIES`) laissés tels quels — ce
+  sont 4 identités fixes et distinctes, pas un pool combinatoire à diversifier de la même façon.
 - ✅ **F3 doit être Semi-Pro, pas Pro** *(chat)* : `PRO_TIER_THRESHOLD` passé de 2 à 3 (`data.js`)
   — F3 fonctionne désormais économiquement comme l'Amateur (frais de gestion, pas de commission
   sur les gains). Nouveau helper `driverStatusLabel(driver, category)` (`driver.js`) affiche
@@ -85,6 +177,15 @@
   pilote du 2e championnat pour les engagements déjà en cours. Tableau "Mes pilotes" : colonnes
   Catégorie/Écurie/Pos. champ./Points affichent désormais les termes du 2e championnat entre
   parenthèses (`withSecondaryTerms` dans `agency.js`).
+  - 🐛 ✅ *Corrigé (audit suite au fix classement WEC)* — `secondaryStanding` (agency.js) lisait
+    `state.standings[categoryId]` avec la catégorie brute ; pour un 2e championnat en WEC
+    (hypercar/GT3), la clé réelle est `categoryId:subClass`, donc la position/points du pilote
+    restaient bloqués sur "Pas encore classé" indéfiniment. Même classe de bug que
+    `teamRankingLabel`, corrigée pareil (résolution de la classe via l'écurie du 2e baquet).
+    Audit du reste du code (`.class` vs `.subClass`, autres clés composites dans
+    `driverStats.js`/`team.js`/`world.js`) : aucune autre occurrence trouvée. Vérifié en
+    forçant un 2e baquet GT3 avec des points : "Pos. champ."/Points affichent bien P2/43 pts
+    au lieu de —/0.
 - ✅ **Afficher l'ID pilote sur toutes les pages où un pilote apparaît** *(chat)* : `[#id]` était
   un tag debug limité à Mes pilotes ; devenu une fonctionnalité permanente (`.debug-id` renommé
   `.id-tag`) et étendu à Talents, fiche pilote, comparaison, Monde ▸ Pilotes/Championnats/Écuries,
@@ -127,8 +228,22 @@
 
 ## Staff
 
-- ⏳ **Refonte du recrutement de staff** *(chat)* : rechercher par rôle plutôt que d'afficher
-  tout le pool d'un coup (`renderWorldStaff`/`renderStaff` montrent tout, même à 600 membres).
+- ✅ **Refonte du recrutement de staff** *(chat)* : `renderWorldStaff` (world.js) avait déjà un
+  filtre par rôle/catégorie/disponibilité/compétence/salaire + pagination 50/page — rien à
+  faire là. Le vrai problème était `renderStaff` (agency.js), l'écran de recrutement propre
+  de l'agence, qui affichait sans aucun filtre les ~240 candidats de `state.staffPool`
+  (`seedWorldStaff`, `staff.js`, distribue 600 membres au total dont 360 aux agences rivales).
+  Ajout de tabs de filtre par rôle (`staffPoolRoleTabs`, même pattern que
+  `staffRoleFilterTabs` déjà existant dans world.js), nouveau `state.ui.staffFilter.role` +
+  `case "filter-staff-pool"` (main.js). Vérifié en jeu : 240/240 → 46/240 en filtrant sur
+  "Recruteur".
+  - ✅ **Filtre complet pour "Candidats disponibles" (`renderStaff`, agency.js)** *(chat)* :
+    ajout de `staffPoolAttributeFilterRow` (compétence principale min. + salaire max.,
+    même présentation que `staffAttributeFilterRow` de world.js), filtrage combiné avec le
+    rôle sur `state.ui.staffFilter` (`minPrimary`/`maxWage`), nouvelles actions
+    `filter-staff-pool-min-primary`/`filter-staff-pool-max-wage` (main.js, listener `"change"`).
+    Vérifié en jeu : 240/240 → 99/240 (compétence ≥ 70) → 0/240 (salaire max 400€, message
+    "Aucun candidat pour ces filtres"), aucune erreur console.
 - ✅ **Tooltip sur le rôle d'un membre du staff** *(chat)* : `ROLES` (`staff.js`) a maintenant un
   champ `description` par rôle, expliquant son effet mécanique réel (ex. Recruteur → scouting,
   Avocat → réduit le débauchage) ; affiché en `title` sur le pill/en-tête de rôle partout où il
@@ -149,30 +264,101 @@
 
 - ⏳ **Revoir le barème de points par catégorie** : `POINTS_TABLE` est unique et générique pour
   toutes les catégories (25-18-15-...), jamais différencié par discipline/tier.
-- ⏳ **Monde ▸ Pilotes — clic sur un pilote pour voir sa fiche** *(chat)* : contrairement à Mes
-  pilotes/Talents, les lignes de `renderWorldDrivers` (world.js) n'ont pas de
-  `data-action="view-driver"`. À noter pour l'implémentation : `renderDriverDetail` ne cherche
-  aujourd'hui que dans `state.drivers` puis `state.scoutPool` — un pilote IA/rival pur n'y est
-  pas trouvable, il faudra étendre la recherche (ou une variante lecture seule).
-- ⏳ **Fenêtre "Résultats" — signaler un champion issu de l'agence** *(chat)* : indiquer quel
-  pilote a été sacré champion avec la mention « un de tes pilotes ! » quand il appartient à
-  l'agence du joueur, pour le distinguer des champions extérieurs à l'agence.
-  - Refonte de l'affichage : un tableau par championnat/année façon [Wikipédia F1
-    2025](https://fr.wikipedia.org/wiki/Championnat_du_monde_de_Formule_1_2025#Classements_saison_2025),
-    pour le classement pilotes ET écuries.
-- ⏳ **Menu Palmarès** *(chat)* : nouvel écran listant les champions par année et par
-  catégorie, ainsi que des distinctions personnelles (« Pilote du championnat », « Pilote de
-  l'année », « Dépassement de l'année »...). Ces distinctions donneront des bonus plus tard,
-  tout comme le fait d'avoir gagné un championnat.
-- ⏳ **Classement à 0 point — trier par meilleur résultat** *(chat)* : quand aucun pilote/équipe
-  n'a encore marqué, classer par meilleure position obtenue plutôt que dans un ordre arbitraire.
-- ⏳ Afficher les résultats de courses course par course, avec archive des classements et
-  résultats de championnats consultable depuis les onglets Pilote et Championnats ; onglet
-  Résultats à détailler aussi pour les résultats d'events (pas seulement les courses) ; second
-  championnat : afficher le prix pour le rejoindre avant de confirmer *(retour d'un ami)*.
-- 🐛 **Classement WEC cassé** *(chat)* : rien ne s'affiche dans le classement WEC même si le
-  championnat a déjà commencé — à investiguer (probablement lié à la clé composite
-  `categoryId:classId` utilisée pour Hypercar/GT3 dans `standings.js`).
+- ✅ **Monde ▸ Pilotes — clic sur un pilote pour voir sa fiche** *(chat)* : lignes de
+  `renderWorldDrivers` (world.js) ont maintenant `data-action="view-driver"`. `renderDriverDetail`
+  (agency.js) retombe désormais sur une nouvelle variante lecture seule
+  (`readOnlyDriverDetail`) pour tout pilote trouvable via `getDriverById` mais absent de
+  `state.drivers`/`state.scoutPool` (IA ou géré par une agence rivale) : identité, baquet,
+  catégorie, agence gérante, classement actuel, attributs — sans négociation/proposition/
+  licenciement, qui ne concernent que le roster du joueur. Limite connue : pas de courses/
+  victoires/podiums affichés, `careerResults` n'étant peuplé que pour les pilotes du joueur
+  (`simulate.js`), ces compteurs resteraient à 0 même pour un pilote IA ayant déjà couru.
+- ✅ **Fenêtre "Résultats" — signaler un champion issu de l'agence** *(chat)* : bug trouvé —
+  `logEntry` (agency.js, cas `season-champion-driver`) affichait « un de tes pilotes ! »
+  **inconditionnellement**, y compris pour un champion IA/rival, alors que le champ
+  `entry.isPlayer` existait déjà et n'était simplement jamais lu à cet endroit. Rendu maintenant
+  conditionnel à `entry.isPlayer`. Vérifié : un champion IA n'affiche plus la mention, un
+  champion du joueur l'affiche toujours.
+  - ✅ **Refonte de l'affichage : tableau par championnat/année façon Wikipédia F1 2025**
+    *(chat)* : "Monde ▸ Championnats" affiche désormais une vraie grille manche par manche
+    (une colonne par manche — position, ou "Ret" en cas d'abandon — plus une colonne Pts
+    cumulés), pour le classement Pilotes ET Écuries/Voitures. Résultat de chaque manche capturé
+    pour TOUS les engagés (pas seulement le joueur, à la différence de `driver.careerResults`)
+    via `recordRoundResult` (`standings.js`), appelé juste après `applyPoints` dans
+    `simulateClassRace` en réutilisant le tableau déjà trié `scored` — aucune double logique de
+    jeu. Noms de pilote/écurie dupliqués dans chaque entrée de manche (pas seulement l'ID) pour
+    rester lisibles même après la suppression/retraite d'un pilote IA. Nouvelle archive durable
+    `state.seasonArchive` (même clé que `state.standings` — `categoryId` ou
+    `categoryId:subClass`), peuplée à chaque `rolloverIfNeeded` avec un instantané
+    `{seasonNumber, driverPoints, teamPoints, carPoints, rounds}` — même forme que la saison en
+    cours, donc une seule fonction de rendu consomme les deux sans branche spéciale. Nouveau
+    sélecteur `<select>` "Saison" (premier `<select>` du projet — le style existait déjà,
+    inutilisé) permet de consulter n'importe quelle saison déjà simulée, pas seulement celle en
+    cours ; le choix de catégorie reste géré par les onglets déjà en place. Écuries (F1,
+    karting...) : cellule de manche = points gagnés ce jour-là (somme plafonnée par
+    `constructorsTopN`, même règle que `applyPoints`) ; Voitures (WEC) : cellule = position/Ret
+    directe, comme les pilotes. Aucun bump de `SCHEMA_VERSION` (champs additifs, backfillés
+    comme `carPoints` déjà). Limite connue et acceptée : une saison déjà en cours au moment de
+    la mise à jour n'a de détail manche par manche qu'à partir des manches disputées après la
+    mise à jour ; le volume de données (~4000-4500 lignes/saison toutes catégories confondues)
+    est conservé indéfiniment pour TOUTES les saisons passées (demande explicite), sans
+    compression/plafond ajouté — seul le mécanisme existant de purge des sauvegardes obsolètes
+    en cas de quota `localStorage` plein reste le filet de sécurité. Vérifié par 20 tests Node
+    isolés (capture par manche, archivage + reset au rollover, plafond `constructorsTopN`) et en
+    jeu (F1 : grille 24 manches progressive + classement écuries par points/manche ; WEC :
+    grille Hypercar/GT3 8 manches, position/voiture, rollover déclenché avec sélecteur "Saison 1"
+    figé et cohérent ; Karting : grille 20 manches sur 60 pilotes), aucune erreur console.
+- ✅ **Menu Palmarès** *(chat)* : nouvel écran (`renderPalmares`, `palmares.js`), accessible
+  depuis la sidebar juste après "Résultats". Liste les champions pilote + écurie par saison et
+  par catégorie (nouveau `state.championsHistory`, peuplé à chaque `rolloverIfNeeded` —
+  distinct de `state.log`, qui n'affiche jamais que les 40-60 dernières entrées et aurait donc
+  fini par perdre les champions des premières saisons d'une longue partie). Une distinction
+  simple ajoutée par saison : "Pilote de l'agence de la saison N" (meilleure position au
+  championnat parmi les pilotes actuellement signés, toutes catégories confondues, via
+  `driver.seasonHistory` déjà existant). Portée volontairement limitée à cette première passe :
+  pas d'autres distinctions ("Pilote de l'année", "Dépassement de l'année"...) ni de bonus de
+  gameplay associés — la liste exacte des distinctions restait à préciser et les bonus étaient
+  explicitement prévus "plus tard" dans la demande d'origine. Limite connue : comme le tableau
+  Historique de la fiche pilote, la distinction ne voit que les pilotes encore sous contrat
+  (un pilote licencié/débauché disparaît de `state.drivers`, donc de ce calcul) — la liste des
+  champions eux-mêmes (`championsHistory`) n'a pas cette limite, elle est durable.
+- ✅ **Classement à 0 point — trier par meilleur résultat** *(chat)* : nouveau champ léger
+  `bestPositionThisSeason` (pilote ET écurie, remis à `null` à chaque rollover) mis à jour pour
+  CHAQUE participant d'une course dans `simulate.js` (pas seulement ceux du joueur, à la
+  différence de `careerResults` — juste un entier, sans coût mémoire significatif même pour les
+  centaines de pilotes/écuries IA). Sert de tiebreak dans `classificationBlock` (world.js)
+  quand les points sont égaux, cas le plus fréquent étant "personne n'a encore marqué".
+  Vérifié : ordre du classement 0-point conforme au tri attendu (points desc, puis meilleure
+  position asc) après plusieurs semaines de simulation.
+- ✅ **Résultats course par course + archive consultable depuis la fiche pilote** *(chat)* :
+  la refonte du classement (ci-dessus) capturait déjà le résultat de chaque manche pour
+  chaque pilote (`state.standings[...].rounds` + `state.seasonArchive`), mais uniquement
+  consultable depuis Monde ▸ Championnats. Chaque ligne du tableau "Historique" d'une fiche
+  pilote (saison en cours ET saisons passées) est désormais cliquable
+  (`data-action="view-driver-season"`) et ouvre un détail manche par manche (position/Ret par
+  manche) juste en dessous, en réutilisant `resolveSeasonView` (nouvel export de
+  `standings.js`, factorisé pour être partagé avec le sélecteur de saison de Monde ▸
+  Championnats — même résolution live/archivée). Un second clic sur la même ligne referme le
+  détail. `driver.seasonHistory` gagne un champ `classId` (WEC hypercar/GT3) aux deux points
+  d'écriture (`standings.js` fin de saison, `team.js` `recordSeasonStint` mi-saison) pour
+  résoudre la bonne clé de classement composite — au passage, la ligne "saison en cours" de la
+  fiche pilote lisait `state.standings[driver.categoryId]` sans le subClass (même classe de bug
+  WEC que `teamRankingLabel`/`secondaryStanding`, corrigée pareil). Aucun bump de schéma
+  (`classId` additif, backfillé `?? null`). Vérifié par 9 tests Node isolés (résolution live/
+  archivée/inexistante, capture du `classId` sur un pilote WEC réellement signé et simulé) et
+  en jeu (clic sur une ligne d'historique WEC → grille 8 manches affichée, second clic la
+  referme), aucune erreur console.
+  - ⏳ Onglet Résultats à détailler aussi pour les résultats d'events (pas seulement les
+    courses) *(retour d'un ami)* — pas fait dans cette passe.
+  - ⏳ Second championnat : afficher le prix pour le rejoindre avant de confirmer *(retour d'un
+    ami)* — pas fait dans cette passe.
+- ✅ **Classement WEC cassé** *(chat)* : cause trouvée — `classificationBlock` (`world.js`)
+  filtrait les écuries d'une classe via `t.class`, un champ qui n'existe pas ; le vrai champ
+  est `t.subClass` (déjà utilisé partout ailleurs — `standings.js`, `agency.js`). Résultat :
+  `classTeams` était toujours vide pour Hypercar/GT3, donc pilotes/écuries/voitures
+  n'affichaient jamais rien, même avec des points déjà marqués. La clé de standings composite
+  `categoryId:classId` elle-même était correcte. Vérifié en simulant jusqu'à la manche 2/8 :
+  classements Hypercar et GT3 tous les deux peuplés (pilotes, écuries, voitures).
 - ✅ Saison sur 52 semaines, avancement hebdomadaire, calendriers différenciés par catégorie ;
   différenciation des marques de voitures en championnats multi-marques.
 - ✅ Classement équipe avant le début de saison : `teamRankingLabel` retombe sur
@@ -182,14 +368,24 @@
 
 ## Investissement & Infrastructures
 
-- ⏳ **Remodelage complet de l'Investissement** *(chat, réf. capture d'écran Soccer Agent)* :
-  plus on investit dans une infrastructure, plus le palier suivant coûte cher à l'achat ET à
-  l'entretien (l'entretien actuel est plat, `getFacilityLevelData` dans `infrastructure.js`) ;
-  ajouter un palier de réputation minimum requis pour pouvoir acheter chaque niveau, en plus
-  du coût.
-- ⏳ Logos pour écuries, championnats, agences, et postes d'investissement ; réputation
+- ✅ **Remodelage complet de l'Investissement** *(chat, réf. capture d'écran Soccer Agent)* :
+  coût ET entretien croissants par palier — en fait déjà le cas dans les données actuelles
+  (`FACILITIES`, `infrastructure.js` : ex. bureaux 0→250→600→1200→2200€/sem d'entretien,
+  0→15k→40k→90k→180k€ de coût), la note du TODO décrivant un entretien "plat" était obsolète.
+  Ce qui manquait réellement — un palier de réputation minimum par niveau — ajouté
+  (`reputationRequired` par niveau, vérifié dans `upgradeFacility`) ; `upgradeFacility` renvoie
+  désormais `{ok, error}` comme le reste des actions du jeu (au lieu d'un booléen silencieux) et
+  `main.js` affiche un toast d'erreur en cas de réputation insuffisante. Vérifié en jeu :
+  bouton "Réputation insuffisante (X)" désactivé sous le seuil, achat réel réussi une fois le
+  seuil atteint, seuil suivant recalculé et re-verrouillé après l'achat.
+- 🔄 Logos pour écuries, championnats, agences, et postes d'investissement ; réputation
   requise et niveau actuel affichés en échelle d'étoiles ; afficher le gain ET l'effet du
   **prochain** palier avant de l'acheter (pas seulement le niveau actuel) *(retour d'un ami)*.
+  Fait pour la partie code : niveau actuel en étoiles (`facilityLevelStars`, agency.js),
+  réputation requise affichée en clair, et prévisualisation complète (effet + entretien +
+  réputation) du prochain palier avant achat (`facilityCard`). Logos : **non fait** — nécessite
+  de vraies ressources graphiques (pas de pipeline d'assets dans ce projet), hors de portée
+  d'un changement de code seul.
 - ✅ Achats personnels de réputation (boutique agence), déplacée avec les infrastructures dans
   un onglet "Investissement" dédié (`renderInvestments` dans `agency.js`).
 
@@ -243,8 +439,15 @@
 - ✅ **Barre espace pour avancer d'une semaine** *(chat)* : raccourci clavier équivalent au
   bouton "Continuer" (`main.js`), désactivé quand un champ de saisie a le focus ou qu'une modale
   (dilemme, confirmation) est ouverte.
-- ⏳ **Menu de sauvegarde amélioré** *(chat)* : permettre de nommer la sauvegarde, et afficher
-  un popup de confirmation en haut au milieu de l'écran, assez grand, lors de la sauvegarde.
+- ✅ **Menu de sauvegarde amélioré** *(chat)* : nouveau champ `state.saveName` (distinct du nom
+  d'agence, purement additif, pas de bump de schéma) — champ texte éditable sur chaque ligne de
+  l'écran "Charger une sauvegarde", bouton "Renommer" à côté de Charger/Supprimer
+  (`renameSave` dans `state.js`, patch direct du JSON en `localStorage` sans charger toute la
+  partie). Popup de confirmation dédié à la sauvegarde : `showSaveBanner` (`dialogs.js`) —
+  plus grand, centré en haut de l'écran, distinct du toast standard (coin bas-droit, réservé
+  aux sauvegardes automatiques silencieuses) ; branché sur le bouton "Sauvegarder" explicite
+  uniquement. Vérifié en jeu : renommage persiste après aller-retour au menu principal, banner
+  visible en haut au centre avec bordure verte/rouge selon succès/échec.
 - ⏳ Personnalisation d'équipe à la création de partie : au-delà du nom + couleur actuels,
   d'autres options de personnalisation non précisées.
 - ✅ *(retour d'un ami, `BITWALL.txt`)* — boutons/couleurs : Retour (`.btn-red.btn-large`),

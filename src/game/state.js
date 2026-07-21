@@ -1,5 +1,5 @@
 import { CATEGORIES, RIVAL_AGENCIES, SEASON_WEEKS, weekInSeason, PRO_COMMISSION_RATE } from "./data.js";
-import { generateDriver, ATTRIBUTE_META } from "./driver.js";
+import { generateDriver } from "./driver.js";
 import { generateAllTeams, benchDriver } from "./team.js";
 import { driverMarketValue } from "./driverStats.js";
 import {
@@ -16,15 +16,12 @@ import {
 import { rosterCapacity } from "./infrastructure.js";
 import { recordTransaction } from "./finance.js";
 import { mulberry32 } from "./rng.js";
+import { generateScoutReveal, shuffledRevealKeys, randomWidth, SCOUT_REVEAL_KEYS } from "./scoutReveal.js";
 
 const SAVE_PREFIX = "pit-wall-save-";
 const LAST_SLOT_KEY = "pit-wall-last-slot";
 const DEEP_SCOUT_COOLDOWN_WEEKS = 2;
 const SIGN_BASE_COST = 3000;
-// Individual characteristics get discovered one at a time, at random, across the whole
-// attribute list — not by whole group — since a driver's traits can vary sharply between
-// each other (see generateDriver's per-attribute swing).
-const SCOUT_REVEAL_KEYS = Object.keys(ATTRIBUTE_META);
 export const SCHEMA_VERSION = 23;
 
 export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#ff3b30", seed = Date.now() | 0) {
@@ -33,6 +30,7 @@ export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#
   const state = {
     schemaVersion: SCHEMA_VERSION,
     slotId,
+    saveName: null,
     seed,
     week: 1,
     agency: { name: agencyName, money: 50000, reputation: 0, color, loan: null },
@@ -46,6 +44,7 @@ export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#
     scoutPool: [],
     investments: {},
     log: [],
+    championsHistory: [],
     transactions: [],
     financeHistory: [],
     infrastructure: { offices: 1, training: 1, prestige: 1 },
@@ -72,26 +71,8 @@ export function refillScoutPool(state, rng) {
   }
 }
 
-function shuffledRevealKeys(rng) {
-  const arr = [...SCOUT_REVEAL_KEYS];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-// Each revealed characteristic gets its own random window width rather than one fixed value
-// for the whole pass — maxWidth (set by recruiter force) only caps how wide that roll can go.
-function randomWidth(rng, minWidth, maxWidth) {
-  return Math.round(minWidth + rng() * Math.max(0, maxWidth - minWidth));
-}
-
-// How many of the ~30 individual characteristics a scouting pass uncovers, scaled by
-// recruiter discovery force. Deep scout's minimum/bonus are set higher so it always surfaces
-// a meaningful batch of new traits on top of whatever the basic pass already found.
-const SCOUT_MIN_REVEAL = 4;
-const SCOUT_FORCE_BONUS = 12;
+// Deep scout's minimum/bonus are set higher so it always surfaces a meaningful batch of new
+// traits on top of whatever the basic pass already found.
 const DEEP_SCOUT_MIN_ADDED = 4;
 const DEEP_SCOUT_MIN_TOTAL = 8;
 const DEEP_SCOUT_FORCE_BONUS = 16;
@@ -114,15 +95,7 @@ export function scoutDriver(state, driverId, { force = false } = {}) {
   const rng = makeRng(state);
   const discoverySkill = averageDiscoverySkill(state);
   const precisionSkill = averagePrecisionSkill(state);
-  const revealCount = Math.round(
-    clamp(SCOUT_MIN_REVEAL + (discoverySkill / 99) * SCOUT_FORCE_BONUS, SCOUT_MIN_REVEAL, SCOUT_REVEAL_KEYS.length)
-  );
-  const maxWidth = clamp(40 - (precisionSkill / 99) * 36, 4, 40);
-  const attributeWidths = {};
-  shuffledRevealKeys(rng)
-    .slice(0, revealCount)
-    .forEach((key) => (attributeWidths[key] = randomWidth(rng, 4, maxWidth)));
-  driver.scoutReveal = { attributeWidths, potentialKnown: false, priceKnown: false };
+  driver.scoutReveal = generateScoutReveal(rng, discoverySkill, precisionSkill);
   return true;
 }
 
@@ -166,6 +139,7 @@ export function deepScoutDriver(state, driverId, { force = false } = {}) {
     attributeWidths,
     potentialKnown: true,
     priceKnown: true,
+    traitsKnown: true,
   };
   state.deepScoutCooldownWeeks = DEEP_SCOUT_COOLDOWN_WEEKS;
   return { ok: true };
@@ -479,6 +453,7 @@ export function listSaves() {
       saves.push({
         slotId: key.slice(SAVE_PREFIX.length),
         agencyName: state.agency.name,
+        saveName: state.saveName ?? null,
         week: state.week,
         money: state.agency.money,
       });
@@ -491,4 +466,20 @@ export function listSaves() {
 
 export function deleteSave(slotId) {
   localStorage.removeItem(SAVE_PREFIX + slotId);
+}
+
+// Patches just the save's display name directly in localStorage, without needing to load the
+// full game into memory first (renaming happens from the title screen's load list).
+export function renameSave(slotId, newName) {
+  const raw = localStorage.getItem(SAVE_PREFIX + slotId);
+  if (!raw) return false;
+  try {
+    const state = JSON.parse(raw);
+    if (!state || state.schemaVersion !== SCHEMA_VERSION) return false;
+    state.saveName = newName;
+    localStorage.setItem(SAVE_PREFIX + slotId, JSON.stringify(state));
+    return true;
+  } catch {
+    return false;
+  }
 }

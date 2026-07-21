@@ -12,6 +12,7 @@ import {
   renderCompareStaff,
 } from "./views/agency.js";
 import { renderWorldDrivers, renderWorldChampionships, renderWorldTeams, renderWorldStaff } from "./views/world.js";
+import { renderPalmares } from "./views/palmares.js";
 import { renderDev } from "./views/dev.js";
 
 const VIEWS = {
@@ -23,6 +24,7 @@ const VIEWS = {
   investissement: renderInvestments,
   nouveautes: renderNews,
   resultats: renderResults,
+  palmares: renderPalmares,
   "compare-drivers": renderCompareDrivers,
   "compare-staff": renderCompareStaff,
   "monde-pilotes": renderWorldDrivers,
