@@ -53,15 +53,43 @@ function pickFavoriteNumbers(rng) {
   return [...numbers];
 }
 
+// How a driver's REAL ceiling compares to their displayed "potential" — three outcomes instead
+// of one flat ratio: usually very close (scouts got it right), rarely a genuine shortfall
+// (bust — 8%), and rarely an underestimate (scouts undersold them — 5%, capped at a modest
+// overshoot rather than a second wonderkid roll in disguise). Shared by generateDriver and
+// generateAIDriver (team.js) so both distributions stay identical.
+export function rollGrowthCeiling(potential, rng) {
+  const roll = rng();
+  if (roll < 0.08) return potential * (0.6 + rng() * 0.25);
+  if (roll < 0.13) return Math.min(99, potential * (1 + rng() * 0.08));
+  return potential * (0.92 + rng() * 0.08);
+}
+
 export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 } = {}) {
-  const potential = clamp(40 + scoutSkill * 0.15 + rng() * 60, 40, 99);
   const age = Math.floor(minAge + rng() * (maxAge - minAge + 1));
-  const startingGap = clamp(25 - scoutSkill * 0.15 + rng() * 20, 5, 45);
+
+  // Wonderkid: a rare, exceptionally gifted YOUNG prospect — low probability by design, so
+  // finding one stays a genuine "did I just find a gem" moment instead of a routine outcome.
+  // Potential scale: 94-99 is "extraordinaire" and reserved for this rare branch alone; 93 is
+  // the best an ordinary roll can ever reach ("excellente note"). Without that 93 cap, the
+  // normal 40-99 spread already put a prospect at 94+ too often (~13% of the time) for the
+  // wonderkid label to mean anything.
+  const isWonderkid = age <= 19 && rng() < 0.03;
+  const potential = isWonderkid ? clamp(94 + rng() * 5, 94, 99) : clamp(40 + scoutSkill * 0.15 + rng() * 53, 40, 93);
+
+  // How far below potential a driver's CURRENT attributes sit — shrinks with age. A raw
+  // 16-year-old is mostly unrealized promise; an older prospect (recruiters can turn up
+  // experienced free agents too, see refillScoutPool) has already had years to develop toward
+  // whatever they're going to become, so their current level should read as a known quantity,
+  // not a rookie's blank slate.
+  const ageProgress = clamp((age - minAge) / 12, 0, 1);
+  const baseGap = clamp(25 - scoutSkill * 0.15 + rng() * 20, 5, 45);
+  const startingGap = baseGap * (1 - ageProgress * 0.75);
   // Bounding the center before applying the swing keeps the swing a genuine spread rather
   // than a floor-collapse: for a low-potential driver, potential - startingGap can sit near
   // 0, and a ±25 swing on top of that pinned most of their attributes at the 20 floor instead
   // of actually varying.
-  const attributeCenter = clamp(potential - startingGap, 30, 85);
+  const attributeCenter = clamp(potential - startingGap, 30, 90);
   const attributes = {};
   for (const key of Object.keys(ATTRIBUTE_META)) {
     // Wide per-attribute swing so a driver's individual characteristics can differ sharply
@@ -83,17 +111,26 @@ export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 }
     isPro: false,
     attributes,
     potential: Math.round(potential),
-    growthCeiling: potential * (0.8 + rng() * 0.2),
+    // Never revealed anywhere (not even deep scouting) — see rollGrowthCeiling above.
+    growthCeiling: rollGrowthCeiling(potential, rng),
+    // A second, fully independent hidden factor — how FAST a driver develops toward their
+    // ceiling, not WHERE that ceiling sits. Rolled once at generation, never surfaced in any
+    // tooltip or scouting reveal. Two prospects with identical displayed stats can age into
+    // clearly different careers, and there's no way for the player to find out which is which
+    // ahead of time — same principle real scouting struggles with (intangible "coachability").
+    growthLuck: 0.75 + rng() * 0.5,
     favoriteNumbers: pickFavoriteNumbers(rng),
     raceNumber: null,
     raceNumberCategoryId: null,
     secondarySeats: [],
     injuryWeeksRemaining: 0,
     highestTierReached: 0,
+    adaptationWeeksRemaining: 0,
     benchedWeeks: 0,
     agencyRelationship: 70,
     teamRelationship: 60,
     negotiationPatience: 100,
+    negotiationCounterOffer: null,
     bestPositionThisSeason: null,
     form: 50,
     careerResults: [],
@@ -101,9 +138,16 @@ export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 }
     pendingOffers: [],
     pendingOfferBudget: 0,
     proposedAt: null,
+    offersExpireAt: null,
+    pendingSecondaryOffers: [],
+    secondaryProposedAt: null,
+    secondaryOffersExpireAt: null,
+    pendingSubstituteOffer: null,
+    pendingTransferOffer: null,
     // Appended last so it consumes rng() after every other field — preserves the existing
     // rng call sequence (and thus seeded/deterministic generation) for everything above.
     traits: assignDriverTraits(rng),
+    acquiredTraitIds: [],
   };
 }
 
@@ -171,6 +215,36 @@ export function superStatTooltip(key) {
   return SUPER_STATS[key].attrs.map((a) => ATTRIBUTE_META[a].label).join(", ");
 }
 
+// A scouted-but-not-owned driver's super stats are no longer shown as an exact number —
+// derived instead from whichever component attributes scouting has actually windowed
+// (attributeWidths), same uncertainty-propagation idea as the raw attributes themselves.
+// A component with no window yet contributes its full [0, 99] range to the average, so an
+// unrevealed attribute widens the super stat's bounds instead of silently being ignored.
+// Trait bonus is only folded in once traits are actually known (deep scout) — omitted
+// otherwise rather than guessed, since an unknown trait's effect is unknown too.
+export function superStatRange(driver, key) {
+  const stat = SUPER_STATS[key];
+  const widths = driver.scoutReveal?.attributeWidths;
+  let sumLow = 0;
+  let sumHigh = 0;
+  let revealedCount = 0;
+  for (const a of stat.attrs) {
+    const width = widths?.[a];
+    if (width !== undefined) {
+      const actual = driver.attributes[a];
+      sumLow += clamp(actual - width / 2, 0, 99);
+      sumHigh += clamp(actual + width / 2, 0, 99);
+      revealedCount += 1;
+    } else {
+      sumHigh += 99;
+    }
+  }
+  const bonus = driver.scoutReveal?.traitsKnown ? traitStatBonus(driver, key) : 0;
+  const low = clamp(Math.round(sumLow / stat.attrs.length + bonus), 0, 99);
+  const high = clamp(Math.round(sumHigh / stat.attrs.length + bonus), 0, 99);
+  return { low, high, revealedCount, total: stat.attrs.length };
+}
+
 // Same category differentiation as before (circuit/endurance/rallye), just redistributed
 // across the 5 super stats instead of the old technique/mental/physique/discipline groups —
 // same totals per profile, same discipline weight.
@@ -198,6 +272,21 @@ export function overallRating(driver) {
     superStat(driver, "resistance") * weights.resistance +
     driver.attributes[disciplineKey] * weights.discipline
   );
+}
+
+// A driver moving up to a genuinely new tier (assignSeat/joinSecondaryChampionship, team.js —
+// not a one-off substitute, which deliberately never triggers this) doesn't perform at their
+// full rating right away: raw skill built up dominating karting doesn't transfer 1:1 to F1.
+// The penalty only ever applies inside race simulation (simulateClassRace, simulate.js) — the
+// driver's displayed stats/rating never change, so this reads as "underperforming their stats"
+// on track while they adapt, not a stat regression the player can see coming.
+export const TIER_ADAPTATION_WEEKS = 12;
+const TIER_ADAPTATION_MAX_PENALTY = 0.25;
+
+export function tierAdaptationFactor(driver) {
+  const weeksRemaining = driver.adaptationWeeksRemaining ?? 0;
+  if (weeksRemaining <= 0) return 1;
+  return 1 - (weeksRemaining / TIER_ADAPTATION_WEEKS) * TIER_ADAPTATION_MAX_PENALTY;
 }
 
 export function reliability(driver) {
@@ -231,7 +320,14 @@ export function growDriver(driver, rng, growthMultiplier = 1) {
     // A higher-potential prospect isn't just capped higher (growthCeiling) — they also pick
     // things up a bit faster, on top of that larger ceiling.
     const potentialFactor = 0.85 + (driver.potential / 99) * 0.3;
-    const growth = Math.max(0, room * (0.06 + rng() * 0.06)) * growthMultiplier * ageFactor * potentialFactor;
+    // Base rate halved from the original 0.06-0.12 — progression (especially for a young,
+    // high-potential driver at a fully-upgraded agency) was reaching full potential within a
+    // single season, leaving no sense of a multi-season development arc.
+    // growthLuck (0.75-1.25, fixed at generation, never shown anywhere) is the invisible
+    // component — two prospects with identical known stats can still turn out to develop at
+    // meaningfully different paces.
+    const growth =
+      Math.max(0, room * (0.035 + rng() * 0.035)) * growthMultiplier * ageFactor * potentialFactor * (driver.growthLuck ?? 1);
     const breakthrough = rng() < 0.02 ? rng() * 2 : 0;
     for (const key of keys) {
       driver.attributes[key] = clamp(driver.attributes[key] + (growth + breakthrough) * (0.7 + rng() * 0.3), 0, 99);

@@ -1,5 +1,5 @@
 import { LOGO_SVG } from "./layout.js";
-import { SEASON_WEEKS, weekInSeason } from "../game/data.js";
+import { SEASON_WEEKS, weekInSeason, AGENCY_SPECIALTIES } from "../game/data.js";
 
 function brand() {
   return `
@@ -34,6 +34,16 @@ function escapeAttr(text) {
   return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
+function specialtyOptions(selected) {
+  return AGENCY_SPECIALTIES.map(
+    (s) => `
+      <button type="button" class="specialty-option ${s.id === selected ? "active" : ""}" data-action="pick-agency-specialty" data-id="${s.id}">
+        <strong>${s.label}</strong>
+        <span class="muted">${s.description}</span>
+      </button>`
+  ).join("");
+}
+
 function renderNewGameScreen(ui) {
   const color = ui.color ?? AGENCY_COLORS[0];
   return `
@@ -48,6 +58,10 @@ function renderNewGameScreen(ui) {
         <label class="title-field">
           Couleur de l'agence
           <div class="color-swatches">${colorSwatches(color)}</div>
+        </label>
+        <label class="title-field">
+          Spécialité de fondation
+          <div class="specialty-list">${specialtyOptions(ui.specialty ?? "none")}</div>
         </label>
         <div class="title-actions">
           <button data-action="title-back" class="secondary">Retour</button>

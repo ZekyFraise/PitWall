@@ -1,13 +1,21 @@
-import { CATEGORIES, CATEGORY_BY_ID, PRO_COMMISSION_RATE, TRACK_STYLES, weekInSeason } from "./data.js";
-import { overallRating, growDriver, getDriverById, reliability, groupAverage, superStat } from "./driver.js";
-import { findTeamById, generateAIDriver, usedDriverNumbersInCategory } from "./team.js";
-import { refillScoutPool, repayLoan } from "./state.js";
+import { CATEGORIES, CATEGORY_BY_ID, TRACK_STYLES, weekInSeason, pointsTableFor } from "./data.js";
+import { overallRating, growDriver, getDriverById, reliability, groupAverage, superStat, tierAdaptationFactor } from "./driver.js";
+import {
+  findTeamById,
+  generateAIDriver,
+  usedDriverNumbersInCategory,
+  tickSubstituteOffers,
+  removeOneOffSecondarySeat,
+  adjustAgencyTeamRelationship,
+} from "./team.js";
+import { refillScoutPool, autoRevealCandidates, resolveScoutSearches, repayLoan } from "./state.js";
 import { tickScoutPoolPoaching, tickFreeAgentPoaching, tickBenchedDriverDecay, bumpRivalReputation } from "./rivals.js";
-import { applyPoints, recordRoundResult, rolloverIfNeeded } from "./standings.js";
-import { autoRevealCandidates, refillStaffPool, bestSkill } from "./staff.js";
-import { trainingGrowthMultiplier, totalUpkeep } from "./infrastructure.js";
+import { applyPoints, applyPowerStageBonus, recordRoundResult, rolloverIfNeeded } from "./standings.js";
+import { refillStaffPool, bestSkill } from "./staff.js";
+import { trainingGrowthMultiplier, totalUpkeep, officeCommissionRate, officePatienceBonus, eliteStaffChance } from "./infrastructure.js";
 import { recordTransaction, recordBalanceSnapshot } from "./finance.js";
 import { triggerRandomEvent, resolveEventChoice } from "./events.js";
+import { refillSponsorPool } from "./sponsors.js";
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -150,7 +158,11 @@ function simulateClassRace(state, category, teams, classId, rng, roundIndex) {
     const reduction = 1 - (1 - physio) * (1 - resistanceReduction);
     const crewReliability = crewAverage(e.drivers, reliability);
     const dnf = rng() < dnfChance(crewReliability, reduction);
-    const crewRating = crewAverage(e.drivers, overallRating);
+    // A driver freshly promoted to a tier they've never raced (tierAdaptationFactor, driver.js)
+    // races below their real rating for a while — raw karting-honed skill doesn't transfer
+    // 1:1 to F1. Never shown in the UI (overallRating itself is untouched), only affects the
+    // race outcome, so a promoted rookie's stat sheet still reads exactly as strong as before.
+    const crewRating = crewAverage(e.drivers, (d) => overallRating(d) * tierAdaptationFactor(d));
     // Form (0-100, neutral at 50) nudges race pace by up to ±4 points — a minor factor
     // next to the ~18-point noise spread, so it colours results without dominating them.
     const formBonus = (crewAverage(e.drivers, (d) => d.form ?? 50) - 50) / 50 * 4;
@@ -170,12 +182,17 @@ function simulateClassRace(state, category, teams, classId, rng, roundIndex) {
       constructorsEnabled: category.constructorsEnabled !== false,
       constructorsTopN: category.constructorsTopN ?? Infinity,
       carClassification: category.carClassification === true,
+      pointsTable: pointsTableFor(category, classId),
     }
   );
+  const stageResults = applyPowerStageBonus(state, category, classId, scored, rng);
   recordRoundResult(state, category.id, classId, scored);
 
   const logEntries = [];
-  const coachBonus = (bestSkill(state, "drivingCoach") / 95) * 0.3;
+  // Halved from 0.3 — same rebalance as trainingGrowthMultiplier's facility/experience bonuses
+  // (infrastructure.js): the combined ceiling was letting a maxed-out agency's drivers grow up
+  // to ~2.4x faster than AI drivers instead of just meaningfully faster.
+  const coachBonus = (bestSkill(state, "drivingCoach") / 95) * 0.15;
   const growthMultiplier = trainingGrowthMultiplier(state) * (1 + coachBonus);
   const mentalProtection = (bestSkill(state, "psychologist") / 95) * 0.5;
 
@@ -209,11 +226,20 @@ function simulateClassRace(state, category, teams, classId, rng, roundIndex) {
           0,
           200
         );
+        // Same result feeding the AGENCY's own standing with this team (distinct from the
+        // driver's personal teamRelationship) — scaled down further since it accumulates
+        // across every driver the agency has ever fielded there, not just this one seat.
+        if (e.team) adjustAgencyTeamRelationship(state, e.team.id, Math.round(teamDelta / 2));
         const grossPrize = e.dnf ? 0 : prizeForPosition(category, position, gridSize);
-        const commissionRate = driver.contract?.commissionRate ?? PRO_COMMISSION_RATE;
+        const commissionRate = driver.contract?.commissionRate ?? officeCommissionRate(state);
         const prize = driver.isPro ? Math.round(grossPrize * commissionRate) : grossPrize;
         state.agency.money += prize;
         if (prize > 0) recordTransaction(state, "race-prize", `${driver.name} — ${category.name}`, prize);
+        if (state.activeSponsor && !e.dnf && position <= 3) {
+          const bonus = position === 1 ? state.activeSponsor.winBonus : state.activeSponsor.podiumBonus;
+          state.agency.money += bonus;
+          recordTransaction(state, "sponsor-bonus", `Prime sponsor — ${state.activeSponsor.name}`, bonus);
+        }
         driver.careerResults.push({
           week: state.week,
           categoryId: category.id,
@@ -222,12 +248,13 @@ function simulateClassRace(state, category, teams, classId, rng, roundIndex) {
           prize,
           dnf: e.dnf,
         });
+        const stageBonus = stageResults.find((r) => r.driverIds.includes(driver.id))?.bonus ?? null;
         logEntries.push({
           type: "player-result",
           driver,
           category,
           team: e.team,
-          result: { position, prize, dnf: e.dnf, gridSize, styleLabel: style?.label ?? null },
+          result: { position, prize, dnf: e.dnf, gridSize, styleLabel: style?.label ?? null, stageBonus },
         });
       } else if (driver.agencyId) {
         bumpRivalReputation(state, driver.agencyId, repDelta);
@@ -302,9 +329,15 @@ function restoreBenchedSeats(state, benched) {
 function runWeekBody(state, rng) {
   const logEntries = [];
 
+  // Ephemeral per-week signal for the topbar ticker (layout.js) — reset before anything can
+  // add to it this week (refillScoutPool, resolved scoutSearches below).
+  state.newTalentsThisWeek = 0;
+
   logEntries.push(...tickScoutPoolPoaching(state, rng));
   logEntries.push(...tickFreeAgentPoaching(state, rng));
   logEntries.push(...tickBenchedDriverDecay(state, rng));
+  logEntries.push(...resolveScoutSearches(state, rng));
+  tickSubstituteOffers(state, rng);
 
   if (state.deepScoutCooldownWeeks > 0) {
     state.deepScoutCooldownWeeks -= 1;
@@ -312,15 +345,48 @@ function runWeekBody(state, rng) {
     autoRevealCandidates(state, rng);
   }
 
+  // Repeatable-purchase shop items (e.g. "Campagne PR") on a cooldown — see purchaseShopItem
+  // (infrastructure.js) for why this exists (money-into-unlimited-reputation was the real leak).
+  if (state.shopCooldowns) {
+    for (const id of Object.keys(state.shopCooldowns)) {
+      if (state.shopCooldowns[id] > 0) state.shopCooldowns[id] -= 1;
+    }
+  }
+
   for (const driver of state.drivers) {
     if (driver.injuryWeeksRemaining > 0) driver.injuryWeeksRemaining -= 1;
-    driver.negotiationPatience = Math.min(100, (driver.negotiationPatience ?? 100) + 3);
+    if (driver.adaptationWeeksRemaining > 0) driver.adaptationWeeksRemaining -= 1;
+    driver.negotiationPatience = Math.min(100, (driver.negotiationPatience ?? 100) + 3 + officePatienceBonus(state));
     // Agency contract duration is now in WEEKS, decremented unconditionally every week —
     // races missed to injury/benching still count against it, unlike the old per-race
     // decrement that only fired for drivers who actually raced.
     if (driver.contract) {
       driver.contract.weeksRemaining -= 1;
       if (driver.contract.weeksRemaining <= 0) driver.contract = null;
+    }
+    // Offers left unanswered go stale after the random 1-4 week window set in proposeToTeams
+    // (team.js) — otherwise a batch of "Propositions reçues" would sit valid forever.
+    if (driver.offersExpireAt != null && state.week >= driver.offersExpireAt) {
+      driver.pendingOffers = [];
+      driver.pendingOfferBudget = 0;
+      driver.proposedAt = null;
+      driver.offersExpireAt = null;
+    }
+    // Same staleness rule for second-championship offers (proposeSecondaryChampionship, team.js).
+    if (driver.secondaryOffersExpireAt != null && state.week >= driver.secondaryOffersExpireAt) {
+      driver.pendingSecondaryOffers = [];
+      driver.secondaryProposedAt = null;
+      driver.secondaryOffersExpireAt = null;
+    }
+    // A one-off substitute offer (tickSubstituteOffers) is tied to ONE specific round — once
+    // that round's week arrives, the window to accept it has passed regardless.
+    if (driver.pendingSubstituteOffer && driver.pendingSubstituteOffer.roundWeek <= state.week) {
+      driver.pendingSubstituteOffer = null;
+    }
+    // A transfer negotiation left unresolved past its window simply lapses — the buying team
+    // moves on, no penalty beyond the missed opportunity.
+    if (driver.pendingTransferOffer && driver.pendingTransferOffer.expiresAtWeek <= state.week) {
+      driver.pendingTransferOffer = null;
     }
   }
 
@@ -332,6 +398,14 @@ function runWeekBody(state, rng) {
     logEntries.push(...simulateCategoryRace(state, category, rng, roundIndex));
   }
   restoreBenchedSeats(state, benched);
+
+  // A one-off substitute seat (acceptSubstituteOffer, team.js) is only ever meant to last for
+  // the exact round it was offered for — remove it right after that round has been simulated,
+  // regardless of whether the driver actually raced it (bench due to a clash counts as "used").
+  for (const driver of state.drivers) {
+    const oneOff = driver.secondarySeats.find((s) => s.oneOff && s.roundWeek === state.week);
+    if (oneOff) removeOneOffSecondarySeat(state, driver, oneOff, rng);
+  }
 
   // Pros no longer draw a weekly wage from the agency — the agency now acts as their agent,
   // earning a negotiated commission on race prizes instead (see the race-prize cut above).
@@ -351,6 +425,16 @@ function runWeekBody(state, rng) {
   }
   if (staffWageTotal > 0) recordTransaction(state, "staff-wage", "Salaires staff", -staffWageTotal);
 
+  if (state.activeSponsor) {
+    state.agency.money += state.activeSponsor.weeklyIncome;
+    recordTransaction(state, "sponsor-income", `Sponsor — ${state.activeSponsor.name}`, state.activeSponsor.weeklyIncome);
+    state.activeSponsor.weeksRemaining -= 1;
+    if (state.activeSponsor.weeksRemaining <= 0) {
+      logEntries.push({ type: "sponsor-contract-ended", sponsorName: state.activeSponsor.name });
+      state.activeSponsor = null;
+    }
+  }
+
   const upkeep = totalUpkeep(state);
   state.agency.money -= upkeep;
   if (upkeep > 0) recordTransaction(state, "infrastructure-upkeep", "Entretien infrastructures", -upkeep);
@@ -361,7 +445,8 @@ function runWeekBody(state, rng) {
 
   state.week += 1;
   refillScoutPool(state, rng);
-  refillStaffPool(state, rng);
+  refillStaffPool(state, rng, eliteStaffChance(state));
+  refillSponsorPool(state, rng);
   return logEntries;
 }
 

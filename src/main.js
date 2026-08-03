@@ -10,6 +10,8 @@ import {
   deleteSave,
   renameSave,
   scoutDriver,
+  scoutRivalDriver,
+  deepScoutRivalDriver,
   deepScoutDriver,
   signDriver,
   negotiateContract,
@@ -20,13 +22,26 @@ import {
   devForceAgencyContract,
   takeLoan,
   releaseDriver,
+  requestScoutSearch,
+  scoutStaff,
+  deepScoutStaff,
 } from "./game/state.js";
-import { proposeToTeams, joinTeam, joinSecondaryChampionship, devForceTeamContract } from "./game/team.js";
+import {
+  proposeToTeams,
+  joinTeam,
+  joinSecondaryChampionship,
+  proposeSecondaryChampionship,
+  acceptSubstituteOffer,
+  devForceTeamContract,
+  negotiateTransfer,
+} from "./game/team.js";
 import { hireStaff, fireStaff } from "./game/staff.js";
+import { signSponsor, terminateSponsor } from "./game/sponsors.js";
 import { upgradeFacility, purchaseShopItem } from "./game/infrastructure.js";
+import { upgradeLifestyle } from "./game/lifestyle.js";
 import { approachDriver } from "./game/recruit.js";
 import { beginWeek, continueWeekAfterChoice } from "./game/simulate.js";
-import { showToast, showConfirm, showEventModal, showSaveBanner } from "./ui/dialogs.js";
+import { showToast, showConfirm, showEventModal, showSaveBanner, showResultModal } from "./ui/dialogs.js";
 
 const COMPARE_MAX = 4;
 const SAVE_FAILED_MESSAGE =
@@ -56,6 +71,37 @@ function enterGame(loadedState) {
   render();
 }
 
+// Dedicated alerts for events the player could easily miss in "Nouveautés" (a plain <li> among
+// many) — shared between beginWeek's direct log entries and continueWeekAfterChoice's, since
+// runWeekBody (and anything it resolves, like scoutSearches) only actually runs in whichever of
+// the two produced entries this week.
+function showSimulationLogToasts(logEntries) {
+  for (const entry of logEntries) {
+    if (entry.type === "rival-poach") {
+      showToast(`${entry.agencyName} débauche ${entry.driverName}, resté sans contrat trop longtemps.`, "warning");
+    } else if (entry.type === "rival-scout-sign") {
+      showToast(`${entry.agencyName} signe ${entry.driverName} avant toi.`, "warning");
+    } else if (entry.type === "scout-search-result") {
+      showToast(`Un nouveau profil (${entry.driverName}) a été trouvé.`, "success");
+    } else if (entry.type === "random-event") {
+      // Only auto-resolved (kind: info) events reach here — a choice dilemma's own resolution is
+      // already popped up via showEventModal's callback (handleSimulate slices it out below).
+      showResultModal(entry.title, entry.text, entry.tone ?? "neutral");
+    } else if (entry.type === "player-result") {
+      // Only results that actually matter get a popup — every other position still lands in
+      // "Résultats" as before, just without an interruption.
+      const { position, dnf } = entry.result;
+      if (dnf) {
+        showResultModal(`Abandon — ${entry.category.name}`, `${entry.driver.name} ne termine pas la course.`, "bad", "⚠️");
+      } else if (position === 1) {
+        showResultModal(`Victoire ! — ${entry.category.name}`, `${entry.driver.name} remporte la course.`, "good", "🏆");
+      } else if (position <= 3) {
+        showResultModal(`Podium — ${entry.category.name}`, `${entry.driver.name} termine P${position}.`, "good", "🏁");
+      }
+    }
+  }
+}
+
 function handleSimulate() {
   const occurredWeek = state.week;
   const rng = makeRng(state);
@@ -63,12 +109,17 @@ function handleSimulate() {
   result.logEntries.forEach((entry) => (entry.week = occurredWeek));
   state.log.push(...result.logEntries);
 
+  showSimulationLogToasts(result.logEntries);
+
   if (result.awaitingChoice) {
     pendingWeekRng = rng;
     showEventModal(result.event, (optionIndex) => {
       const more = continueWeekAfterChoice(state, pendingWeekRng, result.event, optionIndex);
       more.forEach((entry) => (entry.week = occurredWeek));
       state.log.push(...more);
+      // more[0] is the dilemma's own resolution — already shown via the result popup returned
+      // below to showEventModal, so skip it here to avoid popping it up twice.
+      showSimulationLogToasts(more.slice(1));
       if (!saveGame(state)) showToast(SAVE_FAILED_MESSAGE);
       render();
       return more[0] ?? null;
@@ -89,10 +140,13 @@ app.addEventListener("click", (e) => {
   if (view === "title") {
     switch (action) {
       case "title-new":
-        titleUi = { screen: "new", color: "#ff3b30" };
+        titleUi = { screen: "new", color: "#ff3b30", specialty: "none" };
         break;
       case "pick-agency-color":
         titleUi = { ...titleUi, color: id };
+        break;
+      case "pick-agency-specialty":
+        titleUi = { ...titleUi, specialty: id };
         break;
       case "title-continue": {
         const slotId = getLastSlotId();
@@ -116,7 +170,7 @@ app.addEventListener("click", (e) => {
         const color = titleUi.color ?? "#ff3b30";
         const slotId = `slot-${Date.now()}`;
         try {
-          const newState = createNewGame(slotId, name, color);
+          const newState = createNewGame(slotId, name, color, undefined, titleUi.specialty ?? "none");
           const saved = saveGame(newState);
           enterGame(newState);
           if (!saved) showToast("Partie créée, mais la sauvegarde a échoué (stockage plein) — libère de l'espace puis sauvegarde à nouveau.");
@@ -160,8 +214,23 @@ app.addEventListener("click", (e) => {
     case "scout":
       scoutDriver(state, Number(id), { force });
       break;
+    case "scout-rival": {
+      const result = scoutRivalDriver(state, Number(id), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "deep-scout-rival": {
+      const result = deepScoutRivalDriver(state, Number(id), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
     case "deep-scout": {
       const result = deepScoutDriver(state, Number(id), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "request-scout-search": {
+      const result = requestScoutSearch(state, { force });
       if (!result.ok) showToast(result.error);
       break;
     }
@@ -177,6 +246,34 @@ app.addEventListener("click", (e) => {
       const commissionRate = (Number(container?.querySelector('[data-role="negotiate-commission"]')?.value) || 0) / 100;
       const seasons = Number(container?.querySelector('[data-role="negotiate-seasons"]')?.value) || 1;
       const result = negotiateContract(state, Number(id), { weeklyWage, transferFee, commissionRate, seasons }, { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "prefill-counter-offer": {
+      // DOM-only — no game state change, so return early instead of falling through to the
+      // common render() below, which would immediately overwrite the values just set (state
+      // itself hasn't changed, so a re-render would just redraw the same empty/baseline fields).
+      const container = target.closest(".negotiate-box");
+      if (container) {
+        if (target.dataset.commission != null) {
+          const el = container.querySelector('[data-role="negotiate-commission"]');
+          if (el) el.value = target.dataset.commission;
+        }
+        if (target.dataset.wage != null) {
+          const el = container.querySelector('[data-role="negotiate-salary"]');
+          if (el) el.value = target.dataset.wage;
+        }
+        if (target.dataset.fee != null) {
+          const el = container.querySelector('[data-role="negotiate-fee"]');
+          if (el) el.value = target.dataset.fee;
+        }
+      }
+      return;
+    }
+    case "negotiate-transfer": {
+      const container = target.closest(".negotiate-box");
+      const askingFee = Number(container?.querySelector('[data-role="negotiate-transfer-fee"]')?.value) || 0;
+      const result = negotiateTransfer(state, Number(id), { askingFee }, makeRng(state), { force });
       if (!result.ok) showToast(result.error);
       break;
     }
@@ -211,6 +308,16 @@ app.addEventListener("click", (e) => {
       if (!result.ok) showToast(result.error);
       break;
     }
+    case "propose-secondary": {
+      const result = proposeSecondaryChampionship(state, Number(id), makeRng(state), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "accept-substitute": {
+      const result = acceptSubstituteOffer(state, Number(id), makeRng(state), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
     case "buy-shop-item": {
       const result = purchaseShopItem(state, id, { force });
       if (!result.ok) showToast(result.error);
@@ -222,6 +329,28 @@ app.addEventListener("click", (e) => {
     case "fire-staff":
       fireStaff(state, Number(id));
       break;
+    case "sign-sponsor": {
+      const result = signSponsor(state, Number(id));
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "terminate-sponsor": {
+      showConfirm("Résilier ce contrat sponsor ? Perte de réputation immédiate.", () => {
+        terminateSponsor(state);
+        render();
+      });
+      return;
+    }
+    case "scout-staff": {
+      const result = scoutStaff(state, Number(id), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "deep-scout-staff": {
+      const result = deepScoutStaff(state, Number(id), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
     case "filter-staff-pool":
       state.ui.staffFilter = { ...state.ui.staffFilter, role: id };
       break;
@@ -230,10 +359,16 @@ app.addEventListener("click", (e) => {
       if (!result.ok) showToast(result.error);
       break;
     }
+    case "upgrade-lifestyle": {
+      const result = upgradeLifestyle(state, id, { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
     case "take-loan": {
       const container = target.closest(".propose-box");
       const amount = Number(container?.querySelector('[data-role="loan-amount"]')?.value) || 0;
-      const result = takeLoan(state, amount, { force });
+      const months = Number(container?.querySelector('[data-role="loan-months"]')?.value) || 0;
+      const result = takeLoan(state, amount, months, { force });
       if (!result.ok) showToast(result.error);
       break;
     }
@@ -303,6 +438,9 @@ app.addEventListener("click", (e) => {
       state.ui.focusedCategoryId = id;
       state.ui.focusedSeasonNumber = null;
       break;
+    case "filter-offers-category":
+      state.ui.offersFilterCategoryId = id === "all" ? null : id;
+      break;
     case "finance-window":
       state.ui.financeWindow = id;
       break;
@@ -345,10 +483,12 @@ app.addEventListener("click", (e) => {
       state.ui.driverDetailOrigin = state.ui.activeMenu;
       state.ui.activeMenu = "driver-detail";
       state.ui.viewingDriverSeason = null;
+      state.ui.offersFilterCategoryId = null;
       break;
     case "back-to-roster":
       state.ui.activeMenu = state.ui.driverDetailOrigin ?? "mes-pilotes";
       state.ui.viewingDriverSeason = null;
+      state.ui.offersFilterCategoryId = null;
       break;
     case "view-driver-season": {
       const seasonNumber = Number(id);

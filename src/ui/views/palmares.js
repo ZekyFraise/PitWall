@@ -33,6 +33,23 @@ function bestAgencyFinish(state, seasonNumber) {
   return best;
 }
 
+// A driver is a "rookie" for season N if N is the EARLIEST season number in their seasonHistory
+// — i.e. this is the first season this agency has a recorded result for them, regardless of
+// category. Mirrors bestAgencyFinish exactly: pure display-time lookup, no state mutation.
+function bestRookieFinish(state, seasonNumber) {
+  let best = null;
+  for (const driver of state.drivers) {
+    const entry = driver.seasonHistory.find((h) => h.seasonNumber === seasonNumber);
+    if (!entry || entry.championshipPosition == null) continue;
+    const isRookie = !driver.seasonHistory.some((h) => h.seasonNumber < seasonNumber);
+    if (!isRookie) continue;
+    if (!best || entry.championshipPosition < best.position) {
+      best = { driver, position: entry.championshipPosition, categoryId: entry.categoryId };
+    }
+  }
+  return best;
+}
+
 function championshipRow(entry) {
   const label = categoryLabel(entry.categoryId) + classLabel(entry.categoryId, entry.classId);
   const driverCell = entry.driverChampion
@@ -72,9 +89,14 @@ export function renderPalmares(state) {
       const distinctionLine = distinction
         ? `<p class="muted">🏅 Pilote de l'agence de la saison ${seasonNumber} : <b>${distinction.driver.name}</b> ${driverIdTag(distinction.driver.id)} — P${distinction.position} en ${categoryLabel(distinction.categoryId)}</p>`
         : "";
+      const rookie = bestRookieFinish(state, seasonNumber);
+      const rookieLine = rookie
+        ? `<p class="muted">🌟 Révélation de l'agence de la saison ${seasonNumber} : <b>${rookie.driver.name}</b> ${driverIdTag(rookie.driver.id)} — P${rookie.position} en ${categoryLabel(rookie.categoryId)}</p>`
+        : "";
       return `
         <h3 class="class-heading">Saison ${seasonNumber}</h3>
         ${distinctionLine}
+        ${rookieLine}
         <div class="table-scroll">
           <table class="table">
             <thead><tr><th>Championnat</th><th>Pilote champion</th><th>Écurie championne</th></tr></thead>

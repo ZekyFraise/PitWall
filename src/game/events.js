@@ -1,8 +1,11 @@
 import { recordTransaction } from "./finance.js";
 import { POACH_WARNING_THRESHOLD, poachDriverAway } from "./rivals.js";
-import { averageDiscoverySkill, averagePrecisionSkill } from "./staff.js";
 import { generateScoutReveal } from "./scoutReveal.js";
 import { traitEventBias, staffTraitEventBias } from "./traits.js";
+import { applyReputationGain, CATEGORY_BY_ID } from "./data.js";
+import { findTeamById } from "./team.js";
+import { driverMarketValue } from "./driverStats.js";
+import { effectiveScoutSkills } from "./infrastructure.js";
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -35,7 +38,7 @@ function addTeamRelation(driver, delta) {
   driver.teamRelationship = clamp((driver.teamRelationship ?? 60) + delta, 0, 200);
 }
 function addReputation(state, delta) {
-  state.agency.reputation = Math.max(0, state.agency.reputation + delta);
+  applyReputationGain(state, delta);
 }
 function addForm(driver, delta) {
   driver.form = clamp((driver.form ?? 50) + delta, 0, 100);
@@ -86,7 +89,7 @@ const INFO_EVENTS = [
     condition: () => true,
     run: (state, rng) => {
       const delta = 1 + Math.floor(rng() * 2);
-      state.agency.reputation += delta;
+      addReputation(state, delta);
       return { tone: "good", title: "Buzz médiatique", text: `Bon coup médiatique pour l'agence : réputation +${delta}.` };
     },
   },
@@ -139,7 +142,8 @@ const INFO_EVENTS = [
       const candidates = state.scoutPool.filter((d) => !d.scouted);
       const driver = candidates[Math.floor(rng() * candidates.length)];
       driver.scouted = true;
-      driver.scoutReveal = generateScoutReveal(rng, averageDiscoverySkill(state), averagePrecisionSkill(state));
+      const { discovery, precision } = effectiveScoutSkills(state);
+      driver.scoutReveal = generateScoutReveal(rng, discovery, precision);
       return { tone: "good", title: "Tuyau de recruteur", text: `Un tuyau permet de scouter gratuitement ${driver.name}.` };
     },
   },
@@ -175,7 +179,12 @@ const CHOICE_EVENTS = [
             tradeoff: "65% : potentiel +2, relation +4 · 35% : blessure, relation -6",
             successChance: 0.65,
             onSuccess: (state, rng, driver) => {
-              driver.growthCeiling = Math.min(99, driver.growthCeiling + 2);
+              // 94-99 ("extraordinaire") stays reserved for the rare wonderkid roll at
+              // generation — an event nudge can only push a driver up to 93 ("excellente note")
+              // unless they were already in the extraordinaire tier, in which case 99 still
+              // applies as before.
+              const cap = driver.growthCeiling >= 94 ? 99 : 93;
+              driver.growthCeiling = Math.min(cap, driver.growthCeiling + 2);
               driver.agencyRelationship = clamp(driver.agencyRelationship + 4, 0, 200);
               return `${driver.name} progresse bien, son potentiel de développement augmente.`;
             },
@@ -215,7 +224,7 @@ const CHOICE_EVENTS = [
           },
           onFailure: (state, rng) => {
             const loss = Math.min(state.agency.reputation, 1 + Math.floor(rng() * 4));
-            state.agency.reputation -= loss;
+            addReputation(state, -loss);
             return `Le partenariat tourne mal : réputation -${loss}.`;
           },
         },
@@ -245,7 +254,7 @@ const CHOICE_EVENTS = [
             tradeoff: "75% : réputation +3, relation +3 · 25% : indisponible 1 semaine",
             successChance: 0.75,
             onSuccess: (state, rng, driver) => {
-              state.agency.reputation += 3;
+              addReputation(state, 3);
               driver.agencyRelationship = clamp(driver.agencyRelationship + 3, 0, 200);
               return `L'événement se passe bien : réputation +3, relation agence +3.`;
             },
@@ -259,7 +268,7 @@ const CHOICE_EVENTS = [
             tradeoff: "Réputation +1, sans risque",
             successChance: 1,
             onSuccess: (state) => {
-              state.agency.reputation += 1;
+              addReputation(state, 1);
               return "Présence discrète : réputation +1, aucun risque pris.";
             },
           },
@@ -584,6 +593,51 @@ const CHOICE_EVENTS = [
               if (roll < 0.8) { addRelation(driver, -RELATION.m); return `${driver.name} est vexé de ne pas être retenu : relation en forte baisse.`; }
               return `${driver.name} reste finalement, sans rancune notable.`;
             } },
+        ],
+      };
+    },
+  },
+  {
+    // 11b — Transfer Offer (a rival team wants a pro driver mid-contract). Accepting no longer
+    // concludes the transfer immediately — it opens a negotiation over the fee (see
+    // negotiateTransfer, team.js), surfaced on the driver's own fiche (agency.js). The fee
+    // computed here is frozen as pendingTransferOffer.baselineFee — team.js can't import
+    // driverMarketValue (driverStats.js already imports FROM team.js, a cycle), so this is the
+    // only place that ever computes it for this flow.
+    id: "transfer-offer",
+    weight: 2,
+    // Requires another team in the same category to exist, not just a pro/seated driver — a
+    // single-team category (rare, but possible) would otherwise leave describe() with nowhere
+    // to send the driver.
+    condition: (state) => state.drivers.some((d) => d.isPro && seatedHealthy(d) && (state.teams[d.categoryId]?.length ?? 0) > 1),
+    describe: (state, rng) => {
+      const driver = pickDriver(state, rng, (d) => d.isPro && seatedHealthy(d) && (state.teams[d.categoryId]?.length ?? 0) > 1);
+      const currentTeam = findTeamById(state, driver.teamId);
+      const category = CATEGORY_BY_ID[driver.categoryId];
+      const candidates = (state.teams[driver.categoryId] ?? []).filter((t) => t.id !== driver.teamId);
+      const newTeam = candidates[Math.floor(rng() * candidates.length)];
+      const baselineFee = Math.round(driverMarketValue(driver) * (0.3 + category.tier * 0.1));
+      return {
+        driverId: driver.id,
+        title: "Offre de transfert",
+        text: `${newTeam.name} souhaite recruter ${driver.name}, actuellement chez ${currentTeam.name}. Es-tu intéressé par une vente ?`,
+        options: [
+          {
+            label: "Ouvrir les négociations",
+            tradeoff: `Négocie l'indemnité sur la fiche de ${driver.name}`,
+            successChance: 1,
+            onSuccess: (state, rng, driver) => {
+              driver.pendingTransferOffer = {
+                teamId: newTeam.id,
+                teamName: newTeam.name,
+                categoryId: category.id,
+                baselineFee,
+                expiresAtWeek: state.week + 3,
+              };
+              return `${newTeam.name} attend ton offre pour ${driver.name} — direction sa fiche pour négocier.`;
+            },
+          },
+          { label: "Refuser, garder le pilote", tradeoff: "Aucun effet", successChance: 1, onSuccess: () => "Le transfert n'a pas lieu." },
         ],
       };
     },

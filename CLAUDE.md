@@ -62,32 +62,38 @@ sens des imports avant d'en ajouter un nouveau pour éviter les cycles.
 
 | Fichier | Responsabilité |
 |---|---|
-| `data.js` | `CATEGORIES` (source de vérité unique : tier, calendrier, structure d'équipe, marques), constantes saison (52 sem), noms aléatoires, agences rivales |
-| `driver.js` | Génération de pilote, 25 attributs (technique/mental/physique/discipline), `overallRating`, `reliability`, `growDriver`, `pickRaceNumber` |
+| `data.js` | `CATEGORIES` (source de vérité unique : tier, calendrier, structure d'équipe, marques, barème de points), constantes saison (52 sem), noms aléatoires, agences rivales, `AGENCY_SPECIALTIES` (spécialités de fondation) |
+| `driver.js` | Génération de pilote, 25 attributs (technique/mental/physique/discipline) + 5 super stats dérivées (`SUPER_STATS`/`superStat`), `overallRating`, `reliability`, `growDriver`, `pickRaceNumber` |
 | `driverStats.js` | Valeur marché, résultats de saison, classement d'un pilote |
-| `team.js` | Génération des écuries (grilles, marques), `assignSeat`, `proposeToTeams`/`joinTeam`, workload multi-championnat |
-| `standings.js` | Points, classements, rollover de saison |
-| `simulate.js` | Simulation hebdomadaire complète (`beginWeek`/`continueWeekAfterChoice`), résultats de course, croissance, salaires |
+| `team.js` | Génération des écuries (grilles, marques), `assignSeat`, `proposeToTeams`/`joinTeam`, workload multi-championnat, `negotiateTransfer` (marché des transferts) |
+| `standings.js` | Points (barèmes par catégorie/classe), Power Stage WRC, classements, rollover de saison (déclenche `checkSeasonTraitMilestone`) |
+| `simulate.js` | Simulation hebdomadaire complète (`beginWeek`/`continueWeekAfterChoice`), résultats de course, croissance, salaires, revenu/primes sponsor |
 | `rivals.js` | Agences IA, débauchage (`tickFreeAgentPoaching`, `tickBenchedDriverDecay`), `poachCompensation` |
 | `events.js` | Moteur d'événements aléatoires hebdomadaires (info + choix), cooldowns, dilemme de débauchage prioritaire |
-| `staff.js` | 7 rôles de staff, pool de recrutement, génération IA massive + attribution aux rivales |
-| `infrastructure.js` | Bureaux/entraînement/standing, boutique agence |
+| `staff.js` | 7 rôles de staff, pool de recrutement (fog-of-war, scout/deep-scout), spécialités/profils elite, génération IA massive + attribution aux rivales |
+| `traits.js` | 15 traits pilote (fixes à la génération) + 10 traits staff, dont 6 traits pilote **acquérables dynamiquement** en fin de saison (`checkSeasonTraitMilestone`/`grantAcquiredTrait`) |
+| `scoutReveal.js` | Fourchettes de révélation du scouting (normal vs approfondi), pour pilotes et staff |
+| `lifestyle.js` | "Vie personnelle" de l'agent (Logement/Véhicule/Formation), pur confort + réputation à l'achat |
+| `sponsors.js` | Contrat de sponsoring unique (revenu hebdo + primes victoire/podium), 4 paliers gatés par réputation |
+| `infrastructure.js` | Bureaux/Centre d'entraînement/Bureau de standing/Qualité des recruteurs/Réseau de contacts (8 paliers pour les infra principales), boutique agence |
 | `recruit.js` | Approche de pilotes déjà établis (rivaux ou indépendants) |
 | `finance.js` | Transactions, historique, plafonds (200 tx / 52 semaines) |
-| `state.js` | `createNewGame`, save/load, `SCHEMA_VERSION`, scouting, signature, négociation de contrat |
+| `state.js` | `createNewGame` (nom/couleur/spécialité de fondation), save/load, `SCHEMA_VERSION`, scouting, signature, négociation de contrat + contre-offre du pilote |
 | `rng.js` | `mulberry32` |
 
 ### Carte des fichiers (`src/ui/`)
 
 | Fichier | Responsabilité |
 |---|---|
-| `titleScreen.js` | Écran titre, création de partie (nom + couleur) |
-| `layout.js` | Coquille (topbar, sidebar, nav) |
+| `titleScreen.js` | Écran titre, création de partie (nom + couleur + spécialité de fondation) |
+| `layout.js` | Coquille (topbar, sidebar, nav, bannière courses à venir/alertes) |
 | `render.js` | Table de dispatch `activeMenu -> render function` |
-| `views/agency.js` | Mes pilotes, Talents, Staff, Finances, Nouveautés, fiche pilote |
+| `views/agency.js` | Mes pilotes, Talents, Staff, Finances, Investissement (dont Sponsoring), Nouveautés, Résultats, fiche pilote |
 | `views/world.js` | Monde → Pilotes (liste plate) / Championnats / Écuries / Staff |
+| `views/palmares.js` | Champions par saison/catégorie + distinctions ("Pilote de l'agence", "Révélation") |
+| `views/dev.js` | Menu développeur (activable via `state.ui.devMode`) |
 | `charts.js` | Graphiques SVG (ligne trésorerie, barres recettes/dépenses + popup au survol) |
-| `dialogs.js` | `showToast`, `showConfirm`, `showEventModal` (modale de dilemme, sans étape de confirmation) |
+| `dialogs.js` | `showToast`, `showConfirm`, `showEventModal`, `showResultModal` (file d'attente de popups résultat) |
 
 ## Conventions à respecter
 
@@ -104,6 +110,19 @@ sens des imports avant d'en ajouter un nouveau pour éviter les cycles.
 - Le dilemme de débauchage (`poach-dilemma`) est **prioritaire** dans `triggerRandomEvent` —
   il court-circuite la loterie pondérée dès qu'il est éligible, pour garantir une fenêtre de
   réaction au joueur avant un débauchage silencieux.
+- **`makeRng(state)` est déterministe par semaine** (`mulberry32((state.seed + state.week *
+  7919) | 0)`) — deux actions dans la MÊME semaine avec les mêmes entrées tirent exactement la
+  même séquence. Ce n'est pas un bug ; pour vérifier un chemin probabiliste en jeu (négociation,
+  etc.), avancer `state.week` entre les tentatives plutôt que rejouer l'action telle quelle.
+- **Ne jamais passer une rng à valeur constante** (`() => 0`) à du code qui pioche un nombre
+  unique (`assignSeat`, `generateAIDriver`, attribution de numéro de course) — la boucle
+  d'unicité attend des tirages variés et peut boucler indéfiniment. Pour forcer un résultat
+  précis (ex. un jet accept/refuse) dans un test isolé, utiliser un `makeControlledRng(firstValue,
+  seed)` qui force seulement le PREMIER appel puis délègue à un `mulberry32(seed)` réel ensuite.
+- **Vérification navigateur d'un flux qui dépend de plusieurs semaines/résultats de course** :
+  poser temporairement `window.__pwState = () => state; window.__pwRender = () => render();`
+  juste avant `handleSimulate` dans `main.js`, manipuler l'état en direct via le pane Browser,
+  puis **retirer le hook avant de terminer** (grep `TEMP DEBUG HOOK` s'il en reste un oublié).
 
 ## Instructions permanentes de l'utilisateur
 

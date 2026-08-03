@@ -2,15 +2,18 @@
 // drivers (same convention as potentialKnown — see scoutReveal.js), always visible for staff
 // (staff has no scouting/reveal system at all). Modifiers on stats and dilemma outcomes.
 
+// `acquirable: true` marks a trait as learnable/replaceable in-career (behavioral, shaped by
+// experience) via checkSeasonTraitMilestone below — everything else is generation-only and
+// permanent ("irremplaçable"), reserved for raw physical talent or driving style.
 export const DRIVER_TRAITS = {
   // Instinct
   daredevil: { label: "Casse-cou", description: "Plus instinctif en piste, mais prend plus de risques dans les moments délicats.", statEffects: { instinct: 4 } },
-  timid: { label: "Timide", description: "Manque d'aplomb dans les moments décisifs.", statEffects: { instinct: -4 } },
-  leader: { label: "Leader né", description: "Tire l'écurie vers le haut, gère bien la pression du groupe.", statEffects: { instinct: 3 }, eventBias: { "push-driver": 0.1 } },
+  timid: { label: "Timide", description: "Manque d'aplomb dans les moments décisifs.", statEffects: { instinct: -4 }, acquirable: true },
+  leader: { label: "Leader né", description: "Tire l'écurie vers le haut, gère bien la pression du groupe.", statEffects: { instinct: 3 }, eventBias: { "push-driver": 0.1 }, acquirable: true },
   // Régularité
-  cautious: { label: "Prudent", description: "Plus régulier, mais moins percutant dans les moments décisifs.", statEffects: { regularite: 4 } },
-  steelNerves: { label: "Nerfs d'acier", description: "Garde son sang-froid dans les discussions les plus tendues.", statEffects: { regularite: 4 }, eventBias: { "salary-negotiation": 0.1 } },
-  hotHead: { label: "Tête brûlée", description: "S'emporte facilement, ce qui lui joue parfois des tours.", statEffects: { regularite: -4 }, eventBias: { "bad-form": -0.1 } },
+  cautious: { label: "Prudent", description: "Plus régulier, mais moins percutant dans les moments décisifs.", statEffects: { regularite: 4 }, acquirable: true },
+  steelNerves: { label: "Nerfs d'acier", description: "Garde son sang-froid dans les discussions les plus tendues.", statEffects: { regularite: 4 }, eventBias: { "salary-negotiation": 0.1 }, acquirable: true },
+  hotHead: { label: "Tête brûlée", description: "S'emporte facilement, ce qui lui joue parfois des tours.", statEffects: { regularite: -4 }, eventBias: { "bad-form": -0.1 }, acquirable: true },
   // Résistance
   ironman: { label: "Increvable", description: "Résiste mieux à la fatigue et aux efforts physiques prolongés.", statEffects: { resistance: 4 } },
   fragile: { label: "Fragile", description: "Plus sujet aux petits pépins physiques.", statEffects: { resistance: -4 } },
@@ -23,7 +26,7 @@ export const DRIVER_TRAITS = {
   slowStarter: { label: "Lent au démarrage", description: "Met du temps à trouver son rythme en piste.", statEffects: { rythme: -4 } },
   standoffish: { label: "Solitaire", description: "Concentré à l'extrême sur sa performance, au détriment du collectif.", statEffects: { rythme: 3 }, eventBias: { "bad-form": -0.1 } },
   // Sans effet de stat, purement dilemmes
-  charismatic: { label: "Charismatique", description: "À l'aise avec les médias et les sponsors.", eventBias: { "media-invitation": 0.15, "sponsor-conditions": 0.15 } },
+  charismatic: { label: "Charismatique", description: "À l'aise avec les médias et les sponsors.", eventBias: { "media-invitation": 0.15, "sponsor-conditions": 0.15 }, acquirable: true },
 };
 
 export const STAFF_TRAITS = {
@@ -138,6 +141,59 @@ export function driverTraitTooltip(id) {
   }
   parts.push(...eventBiasParts(trait.eventBias));
   return parts.length ? `${trait.description} (${parts.join(" · ")})` : trait.description;
+}
+
+// Grants an acquirable trait dynamically gained in-career. Caps at the same 2-trait limit as
+// generation — if a driver already has 2, only an already-ACQUIRED trait (never a generated,
+// "irremplaçable" one) can be evicted to make room, oldest first (driver.acquiredTraitIds is
+// append-only, so [0] is always the oldest). Returns null if the trait is already held, or if
+// both slots are taken by innate traits (no room, nothing evicted).
+export function grantAcquiredTrait(driver, traitId) {
+  if (driver.traits.includes(traitId)) return null;
+  if (driver.traits.length < 2) {
+    driver.traits.push(traitId);
+    driver.acquiredTraitIds.push(traitId);
+    return { traitId, replaced: null };
+  }
+  if (driver.acquiredTraitIds.length > 0) {
+    const replaced = driver.acquiredTraitIds.shift();
+    driver.traits = driver.traits.filter((id) => id !== replaced);
+    driver.traits.push(traitId);
+    driver.acquiredTraitIds.push(traitId);
+    return { traitId, replaced };
+  }
+  return null;
+}
+
+// Checked once per player driver at season-rollover (standings.js) against that season's
+// stint stats. At most one trait granted per driver per season — the first threshold met (in
+// priority order) rolls its own chance; a miss or an already-held trait falls through to the
+// next candidate. races >= 6 excludes too-short stints (mid-season arrival, long injury) from
+// being judged on a tiny sample.
+export function checkSeasonTraitMilestone(driver, { wins, podiums, races, position, totalDrivers }, rng) {
+  if (races < 6) return null;
+  const candidates = [
+    { test: wins >= 3, chance: 0.4, pick: () => "leader" },
+    {
+      test: races - podiums <= 1 && podiums >= 5,
+      chance: 0.35,
+      pick: () => (driver.traits.includes("steelNerves") ? "cautious" : "steelNerves"),
+    },
+    {
+      test: wins === 0 && podiums === 0 && position > totalDrivers * 0.7,
+      chance: 0.35,
+      pick: () => ((driver.attributes.agressivite ?? 50) >= 60 ? "hotHead" : "timid"),
+    },
+    { test: (driver.agencyRelationship ?? 100) >= 160, chance: 0.25, pick: () => "charismatic" },
+  ];
+  for (const c of candidates) {
+    if (!c.test) continue;
+    const traitId = c.pick();
+    if (driver.traits.includes(traitId)) continue;
+    if (rng() >= c.chance) continue;
+    return grantAcquiredTrait(driver, traitId);
+  }
+  return null;
 }
 
 export function staffTraitTooltip(id) {

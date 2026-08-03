@@ -60,6 +60,45 @@ function formatTradeoffLines(tradeoff) {
     .filter(Boolean);
 }
 
+const DEFAULT_RESULT_ICONS = { good: "🎉", bad: "⚠️", neutral: "ℹ️" };
+const resultModalQueue = [];
+let resultModalShowing = false;
+
+function drainResultModalQueue() {
+  const next = resultModalQueue.shift();
+  if (!next) {
+    resultModalShowing = false;
+    return;
+  }
+  resultModalShowing = true;
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box result-modal result-modal-${next.tone}">
+      <div class="result-icon">${next.icon}</div>
+      <h3>${next.title}</h3>
+      <p>${next.text}</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => {
+    overlay.remove();
+    drainResultModalQueue();
+  };
+  overlay.addEventListener("click", close);
+  setTimeout(close, 5000);
+}
+
+// Big centered popup for event outcomes and notable race results — replaces the small corner
+// toast for these, since a win/podium/dilemma resolution deserves more visibility than a
+// discreet corner notification. Queued rather than stacked: only one shown at a time, so a week
+// with several notable results (e.g. two podiums + an event) doesn't pile up overlapping
+// dimmed backgrounds.
+export function showResultModal(title, text, tone = "neutral", icon = null) {
+  resultModalQueue.push({ title, text, tone, icon: icon ?? DEFAULT_RESULT_ICONS[tone] ?? DEFAULT_RESULT_ICONS.neutral });
+  if (!resultModalShowing) drainResultModalQueue();
+}
+
 export function showEventModal(event, onOptionPicked) {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
@@ -68,24 +107,20 @@ export function showEventModal(event, onOptionPicked) {
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
-  // Dilemma options don't carry an explicit accept/decline tag in the event data, so tone is
-  // inferred from position — by convention across every dilemma in events.js, the first option
-  // is the most cooperative/accepting one and the last is the outright refusal, with any
-  // middle options being a compromise. First = green, last (when there's more than one option)
-  // = gray, middle = neutral.
+  // Dilemma options don't carry an explicit accept/decline tag in the event data — coloring
+  // buttons by inferred position (first=green, last=gray) wasn't reliable across all 26
+  // dilemmas, so every option now gets the same neutral styling instead of a guessed tone.
   const optionsHtml = event.options
     ? event.options
-        .map((o, i) => {
-          const isLast = i === event.options.length - 1 && event.options.length > 1;
-          const toneClass = i === 0 ? "btn-green" : isLast ? "secondary" : "primary";
-          return `
-        <button class="${toneClass} event-option" data-idx="${i}">
+        .map(
+          (o, i) => `
+        <button class="secondary event-option" data-idx="${i}">
           ${o.label}
           ${o.tradeoff ? `<div class="event-tradeoff">${formatTradeoffLines(o.tradeoff).map((line) => `<div>${line}</div>`).join("")}</div>` : ""}
-        </button>`;
-        })
+        </button>`
+        )
         .join("")
-    : `<button class="primary" data-idx="-1">OK</button>`;
+    : `<button class="secondary" data-idx="-1">OK</button>`;
   box.innerHTML = `
     <h3>${event.title ?? "Événement"}</h3>
     <p>${event.text ?? ""}</p>
@@ -95,11 +130,11 @@ export function showEventModal(event, onOptionPicked) {
     btn.addEventListener("click", () => {
       const idx = Number(btn.dataset.idx);
       // Apply consequences and close immediately — no confirmation step. The outcome is
-      // surfaced through an auto-dismissing toast rather than a second modal screen.
+      // surfaced through the big centered result popup rather than a second choice screen.
       const result = idx >= 0 ? onOptionPicked(idx) : null;
       overlay.remove();
       if (result && result.text) {
-        showToast(result.text, result.tone === "bad" ? "error" : "success");
+        showResultModal(result.title ?? event.title, result.text, result.tone ?? "neutral");
       }
     });
   });

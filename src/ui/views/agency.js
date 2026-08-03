@@ -1,14 +1,37 @@
-import { CATEGORIES, CATEGORY_BY_ID, CATEGORY_EMOJI, SEASON_WEEKS, MAX_DRIVER_WORKLOAD, weekInSeason, isMercatoWindow, TRACK_STYLES } from "../../game/data.js";
-import { overallRating, peakAge, driverStatusLabel, getDriverById, ATTRIBUTE_META, ATTRIBUTE_GROUPS, GROUP_LABELS, SUPER_STATS, superStat, superStatTooltip } from "../../game/driver.js";
-import { signCost, signCostRange, contractBaseline, LOAN_ELIGIBLE_THRESHOLD, LOAN_MAX_AMOUNT } from "../../game/state.js";
-import { findTeamById, totalWorkload, secondarySeatCost } from "../../game/team.js";
-import { FACILITIES, MAX_FACILITY_LEVEL, getFacilityLevelData, nextFacilityLevelData, SHOP_ITEMS, rosterCapacity } from "../../game/infrastructure.js";
+import { CATEGORIES, CATEGORY_BY_ID, CATEGORY_EMOJI, SEASON_WEEKS, MAX_DRIVER_WORKLOAD, weekInSeason, isMercatoWindow, TRACK_STYLES, pointsTableFor } from "../../game/data.js";
+import { overallRating, peakAge, driverStatusLabel, getDriverById, ATTRIBUTE_META, ATTRIBUTE_GROUPS, GROUP_LABELS, SUPER_STATS, superStat, superStatRange, superStatTooltip } from "../../game/driver.js";
+import {
+  signCost,
+  signCostRange,
+  contractBaseline,
+  LOAN_ELIGIBLE_THRESHOLD,
+  LOAN_MAX_AMOUNT,
+  LOAN_DURATION_MONTHS_OPTIONS,
+  loanWeeksForMonths,
+  scoutSearchCost,
+  staffScoutCost,
+  staffDeepScoutCost,
+} from "../../game/state.js";
+import { findTeamById, totalWorkload, agencyTeamRelationship, AGENCY_TEAM_RELATIONSHIP_DEFAULT, transferNegotiationWindow } from "../../game/team.js";
+import { POACH_WARNING_THRESHOLD } from "../../game/rivals.js";
+import {
+  FACILITIES,
+  facilityMaxLevel,
+  getFacilityLevelData,
+  nextFacilityLevelData,
+  SHOP_ITEMS,
+  rosterCapacity,
+  shopCooldownRemaining,
+} from "../../game/infrastructure.js";
 import { ROLES, scoutCost, deepScoutCost } from "../../game/staff.js";
+import { LIFESTYLE, lifestyleMaxLevel, getLifestyleLevelData, nextLifestyleLevelData } from "../../game/lifestyle.js";
 import { driverMarketValue, seasonResultsFor, championshipStanding } from "../../game/driverStats.js";
 import { racesUntilSeasonEnd, resolveSeasonView } from "../../game/standings.js";
+import { positionColorClass, approachCell } from "./world.js";
 import { aggregatedTotals, breakdownByType, TRANSACTION_LABELS } from "../../game/finance.js";
 import { lineChart, barChart } from "../charts.js";
 import { DRIVER_TRAITS, STAFF_TRAITS, driverTraitTooltip, staffTraitTooltip } from "../../game/traits.js";
+import { SPONSOR_TIERS } from "../../game/sponsors.js";
 
 function driverIdTag(driver) {
   return `<span class="id-tag">[#${driver.id}]</span>`;
@@ -17,11 +40,23 @@ function driverIdTag(driver) {
 const SUPER_STAT_KEYS = ["rythme", "regularite", "resistance", "adaptabilite", "instinct"];
 
 // The 5 super stats — the real performance inputs (driver.js) — displayed together wherever
-// Rythme/Régularité already appeared, gated by the same scouted/signed reveal boolean each
-// call site already used for those two. Each carries a tooltip listing its component attributes.
-function superStatsLine(driver, revealed) {
+// Rythme/Régularité already appeared. `mode` is "exact" for a signed/owned driver (never
+// hidden), "range" for a scouted-but-not-owned driver (prospect or AI/rival — fourchette
+// derived from whichever component attributes are actually windowed, superStatRange), or
+// false/undefined to show "?" outright. Each carries a tooltip listing its component attributes.
+function superStatDisplay(driver, key, mode) {
+  if (mode === "exact") return `${Math.round(superStat(driver, key))}`;
+  if (mode === "range") {
+    const { low, high, revealedCount } = superStatRange(driver, key);
+    if (revealedCount === 0) return "?";
+    return low === high ? `${low}` : `${low}-${high}`;
+  }
+  return "?";
+}
+
+function superStatsLine(driver, mode) {
   return SUPER_STAT_KEYS.map((key) => {
-    const value = revealed ? Math.round(superStat(driver, key)) : "?";
+    const value = superStatDisplay(driver, key, mode);
     return `<span title="${superStatTooltip(key)}">${SUPER_STATS[key].label} : <b>${value}</b></span>`;
   }).join(" · ");
 }
@@ -29,13 +64,18 @@ function superStatsLine(driver, revealed) {
 // Same visual form as the classic attribute stat bars, grouped in their own card just above
 // the "Attributs" card — kept as a separate encart rather than folded into attributeSection
 // since super stats are composites (5-6 attributes each), not a 5th raw attribute group.
-function superStatSection(driver, revealed) {
+function superStatSection(driver, mode) {
   const rowsFor = (keys) =>
     keys
       .map((key) => {
         const label = SUPER_STATS[key].label;
         const description = superStatTooltip(key);
-        return revealed ? statBar(label, superStat(driver, key), description) : scoutUnknownRow(label, description);
+        if (mode === "exact") return statBar(label, superStat(driver, key), description);
+        if (mode === "range") {
+          const { low, high, revealedCount } = superStatRange(driver, key);
+          return revealedCount === 0 ? scoutUnknownRow(label, description) : scoutRangeRow(label, low, high, description);
+        }
+        return scoutUnknownRow(label, description);
       })
       .join("");
   const half = Math.ceil(SUPER_STAT_KEYS.length / 2);
@@ -47,15 +87,21 @@ function superStatSection(driver, revealed) {
     </div>`;
 }
 
-// Traits are fixed at generation and hidden behind deep scouting for a prospect (same
+// Most traits are fixed at generation and hidden behind deep scouting for a prospect (same
 // convention as potentialKnown) — a signed driver always sees their own traits unconditionally,
-// like attributeSection/superStatSection already do.
+// like attributeSection/superStatSection already do. A handful (acquirable: true in traits.js)
+// can also be gained/replaced dynamically at season-end (checkSeasonTraitMilestone) — those are
+// tracked in driver.acquiredTraitIds and marked with 🌱 here to distinguish them from innate ones.
 function traitsSection(driver, revealed) {
   if (!revealed) return `<p class="muted">Traits inconnus — nécessite un scouting approfondi.</p>`;
   const traits = driver.traits ?? [];
   if (traits.length === 0) return `<p class="muted">Aucun trait particulier.</p>`;
   return traits
-    .map((id) => `<span class="pill" title="${driverTraitTooltip(id)}">${DRIVER_TRAITS[id].label}</span>`)
+    .map((id) => {
+      const acquired = driver.acquiredTraitIds?.includes(id);
+      const tooltip = acquired ? `${driverTraitTooltip(id)} (trait acquis en cours de carrière)` : driverTraitTooltip(id);
+      return `<span class="pill" title="${tooltip}">${acquired ? "🌱 " : ""}${DRIVER_TRAITS[id].label}</span>`;
+    })
     .join(" ");
 }
 
@@ -212,6 +258,14 @@ function teamRankingLabel(state, teamId, categoryId) {
   return "Pas encore classée";
 }
 
+// Only surfaced once it has moved from the neutral default — most teams the agency has never
+// dealt with stay at baseline and don't need a callout on every single offer row.
+function agencyRelationSuffix(state, teamId) {
+  const value = agencyTeamRelationship(state, teamId);
+  if (value === AGENCY_TEAM_RELATIONSHIP_DEFAULT) return "";
+  return ` · Relation agence : ${Math.round(value)}`;
+}
+
 // championshipStanding (driverStats.js) only looks at driver.categoryId (the main
 // championship) — this variant takes an explicit categoryId so it also works for a driver's
 // secondary-championship seats, which live outside driver.categoryId.
@@ -243,13 +297,29 @@ function offersSection(state, driver) {
       if (catA !== catB) return catA - catB;
       return b.prestige - a.prestige;
     });
-    const rows = sortedOffers
+    // Tabs only for categories actually represented, plus "Toutes" — same filter-tab pattern as
+    // Monde ▸ Championnats' categoryTabs, but scoped to this driver's own offer batch instead of
+    // every category in the game.
+    const offeredCategoryIds = [...new Set(sortedOffers.map((o) => o.categoryId))];
+    const filterId = state.ui.offersFilterCategoryId;
+    const filterTabs =
+      offeredCategoryIds.length > 1
+        ? `<div class="tabs">
+            <button class="tab ${!filterId ? "active" : ""}" data-action="filter-offers-category" data-id="all">Toutes</button>
+            ${CATEGORIES.filter((c) => offeredCategoryIds.includes(c.id))
+              .map((c) => `<button class="tab ${filterId === c.id ? "active" : ""}" data-action="filter-offers-category" data-id="${c.id}">${c.name}</button>`)
+              .join("")}
+          </div>`
+        : "";
+    const visibleOffers = filterId ? sortedOffers.filter((o) => o.categoryId === filterId) : sortedOffers;
+    const rows = visibleOffers
       .map(
         (o) => `
         <div class="offer-row">
           <div>
             <strong>${o.teamName}</strong>
-            <span class="muted">${o.categoryName} · Prestige ${prestigeStars(o.prestige)} (${o.prestige}) · ${teamRankingLabel(state, o.teamId, o.categoryId)}</span>
+            ${o.isSkip ? `<span class="pill" title="Saut de palier exceptionnel">⚡ Saut de catégorie</span>` : ""}
+            <span class="muted">${o.categoryName} · Prestige ${prestigeStars(o.prestige)} (${o.prestige}) · ${teamRankingLabel(state, o.teamId, o.categoryId)}${agencyRelationSuffix(state, o.teamId)}</span>
           </div>
           <button data-action="join-team" data-id="${driver.id}" data-team-id="${o.teamId}">Rejoindre (${o.cost.toLocaleString("fr-FR")}€)</button>
         </div>`
@@ -259,6 +329,7 @@ function offersSection(state, driver) {
       <div class="propose-box">
         <h3>Propositions reçues</h3>
         ${windowNotice}
+        ${filterTabs}
         ${rows}
         <label class="invest-line" title="Budget de recrutement : capital de l'AGENCE dépensé pour convaincre une écurie de prendre ce pilote — différent du budget course du pilote.">
           Nouveau budget de recrutement
@@ -292,6 +363,24 @@ function contractNegotiationSection(state, driver) {
   const baseline = contractBaseline(state, driver);
   const patience = Math.round(driver.negotiationPatience ?? 100);
 
+  // Set on a refused offer (negotiateContract, state.js) so the player has a concrete target
+  // instead of guessing blind — cleared once a contract is actually signed.
+  const counter = driver.negotiationCounterOffer;
+  const counterOfferHtml = counter
+    ? `
+      <div class="counter-offer">
+        <p><b>${driver.name} propose :</b> ${
+          driver.isPro
+            ? `Commission ${Math.round(counter.commissionRate * 100)}%`
+            : `Salaire ${counter.weeklyWage.toLocaleString("fr-FR")}€/sem, indemnité ${counter.transferFee.toLocaleString("fr-FR")}€`
+        }</p>
+        <button data-action="prefill-counter-offer" data-id="${driver.id}" class="secondary small"
+          ${driver.isPro ? `data-commission="${Math.round(counter.commissionRate * 100)}"` : `data-wage="${counter.weeklyWage}" data-fee="${counter.transferFee}"`}>
+          Reprendre cette proposition
+        </button>
+      </div>`
+    : "";
+
   const proFields = driver.isPro
     ? `
       <label class="invest-line" title="Commission : part des gains de course que l'agence conserve à chaque course, en tant qu'agent du pilote (plus de salaire versé directement). Plus elle est basse, plus l'offre paraît généreuse au pilote — il garde plus de ses gains — mais moins l'agence encaisse.">
@@ -319,6 +408,7 @@ function contractNegotiationSection(state, driver) {
       <p class="muted" title="Ce contrat lie le pilote à ton AGENCE (rémunération, durée) — il est distinct du baquet écurie, qui expire à la fin de saison avec une chance de renouvellement automatique.">Ce contrat lie le pilote à ton agence (pas à une écurie) : il fixe sa rémunération et sa fidélité envers toi. Le baquet en écurie est une affaire séparée, gérée plus bas.</p>
       <p class="muted">Une offre trop éloignée de ses attentes peut être refusée — et use sa patience, le rendant plus dur à convaincre pour un temps (elle se régénère lentement).</p>
       <p class="muted">Patience actuelle : <b>${patience}/100</b></p>
+      ${counterOfferHtml}
       ${proFields}
       <label class="invest-line" title="Durée d'engagement en saisons pleines après la fin de la saison en cours. Un engagement plus long rend le pilote plus enclin à accepter.">
         Durée (saisons)
@@ -331,6 +421,54 @@ function contractNegotiationSection(state, driver) {
     </div>`;
 }
 
+// A one-off substitute offer (tickSubstituteOffers, team.js) is separate from a season-long
+// second championship — a single team reaching out for exactly one upcoming round, not a
+// standing engagement. Shown as its own card so it isn't confused with the season-long flow.
+function substituteOfferSection(state, driver) {
+  const offer = driver.pendingSubstituteOffer;
+  if (!offer) return "";
+  return `
+    <div class="propose-box">
+      <h3>Offre de remplacement — une course</h3>
+      <div class="offer-row">
+        <div>
+          <strong>${offer.teamName}</strong>
+          <span class="muted">${offer.categoryName} · course de la semaine ${offer.roundWeek} · ${offer.cost.toLocaleString("fr-FR")}€</span>
+        </div>
+        <button data-action="accept-substitute" data-id="${driver.id}">Accepter (${offer.cost.toLocaleString("fr-FR")}€)</button>
+      </div>
+    </div>`;
+}
+
+// Opened by the "transfer-offer" dilemma's "Ouvrir les négociations" branch (events.js) —
+// negotiating the fee happens here instead of the dilemma imposing one, mirroring the
+// input+fourchette shape of contractNegotiationSection below without sharing its logic (this
+// negotiates with a THIRD-PARTY TEAM, not the driver).
+function transferNegotiationSection(state, driver) {
+  const offer = driver.pendingTransferOffer;
+  if (!offer) return "";
+  const window = transferNegotiationWindow(driver);
+  return `
+    <div class="propose-box negotiate-box">
+      <h3>Négociation de transfert — ${offer.teamName}</h3>
+      <p class="muted">${offer.teamName} souhaite recruter ${driver.name}. Plus l'indemnité demandée est élevée, moins l'écurie a de chances d'accepter.</p>
+      <p class="muted">Expire semaine ${offer.expiresAtWeek} sans accord.</p>
+      <label class="invest-line" title="Indemnité totale demandée à l'écurie acheteuse — ta commission (Bureau) en dépend directement.">
+        Indemnité demandée
+        <input type="number" min="0" step="1000" data-role="negotiate-transfer-fee" value="${window.baselineFee}" />
+        €
+      </label>
+      <p class="muted hint">Fourchette indicative : ${window.minFee.toLocaleString("fr-FR")}–${window.maxFee.toLocaleString("fr-FR")}€.</p>
+      <div class="card-actions">
+        <button data-action="negotiate-transfer" data-id="${driver.id}">Proposer l'indemnité</button>
+      </div>
+    </div>`;
+}
+
+// Season-long second championship now requires an explicit proposal (proposeSecondaryChampionship,
+// team.js) instead of always listing every eligible team — mirrors offersSection's pattern for
+// the primary championship. The category list itself is already tier-gated (listSecondaryJoinableTeams),
+// which is what fixes a karting-only driver ever being offered something like WEC.
 function secondaryChampionshipSection(state, driver) {
   if (!driver.teamId) return "";
   const used = totalWorkload(driver);
@@ -341,30 +479,45 @@ function secondaryChampionshipSection(state, driver) {
       const category = CATEGORY_BY_ID[s.categoryId];
       const standing = secondaryStanding(state, s.categoryId, s.teamId, driver.id);
       const standingLabel = standing.position ? `P${standing.position} · ${standing.points} pts` : "Pas encore classé";
-      return `<div class="muted">${t?.name ?? "?"} — ${category?.name ?? s.categoryId} (${teamRankingLabel(state, s.teamId, s.categoryId)} · ${standingLabel})</div>`;
+      const oneOffTag = s.oneOff ? " · remplacement ponctuel" : "";
+      return `<div class="muted">${t?.name ?? "?"} — ${category?.name ?? s.categoryId} (${teamRankingLabel(state, s.teamId, s.categoryId)} · ${standingLabel}${oneOffTag})</div>`;
     })
     .join("");
 
-  const options = CATEGORIES.filter(
-    (c) => c.id !== driver.categoryId && !driver.secondarySeats.some((s) => s.categoryId === c.id) && c.repRequired <= state.agency.reputation && used + c.workload <= MAX_DRIVER_WORKLOAD
-  );
-  const rows = options
-    .flatMap((c) => (state.teams[c.id] ?? []).slice(0, 5).map((team) => ({ team, category: c })))
-    .map(({ team, category }) => {
-      const cost = secondarySeatCost(state, team);
-      return `
+  if (driver.pendingSecondaryOffers.length > 0) {
+    const sortedOffers = [...driver.pendingSecondaryOffers].sort((a, b) => {
+      const catA = CATEGORIES.findIndex((c) => c.id === a.categoryId);
+      const catB = CATEGORIES.findIndex((c) => c.id === b.categoryId);
+      return catA !== catB ? catA - catB : b.prestige - a.prestige;
+    });
+    const rows = sortedOffers
+      .map(
+        (o) => `
       <div class="offer-row">
-        <div><strong>${team.name}</strong><span class="muted">${category.name} · charge +${category.workload} · ${teamRankingLabel(state, team.id, category.id)} · ${cost.toLocaleString("fr-FR")}€</span></div>
-        <button data-action="join-secondary" data-id="${driver.id}" data-team-id="${team.id}">Rejoindre (${cost.toLocaleString("fr-FR")}€)</button>
+        <div><strong>${o.teamName}</strong><span class="muted">${o.categoryName} · Prestige ${prestigeStars(o.prestige)} (${o.prestige}) · ${teamRankingLabel(state, o.teamId, o.categoryId)}${agencyRelationSuffix(state, o.teamId)}</span></div>
+        <button data-action="join-secondary" data-id="${driver.id}" data-team-id="${o.teamId}">Rejoindre (${o.cost.toLocaleString("fr-FR")}€)</button>
+      </div>`
+      )
+      .join("");
+    return `
+      <div class="propose-box">
+        <h3>Second championnat (charge ${used}/${MAX_DRIVER_WORKLOAD})</h3>
+        ${currentRows}
+        ${rows}
       </div>`;
-    })
-    .join("");
+  }
+
+  const noOffersMessage =
+    driver.secondaryProposedAt != null
+      ? `<p class="warn">Aucune écurie n'a répondu favorablement pour un second championnat.</p>`
+      : `<p class="muted">Propose ce pilote pour un second championnat — aucune écurie ne le fera spontanément.</p>`;
 
   return `
     <div class="propose-box">
       <h3>Second championnat (charge ${used}/${MAX_DRIVER_WORKLOAD})</h3>
       ${currentRows}
-      ${rows || `<p class="muted">Aucune écurie disponible avec cette charge.</p>`}
+      ${noOffersMessage}
+      <button data-action="propose-secondary" data-id="${driver.id}" class="secondary">Proposer pour un second championnat</button>
     </div>`;
 }
 
@@ -376,7 +529,8 @@ function logEntry(entry) {
         ? "abandon"
         : `P${result.position}/${result.gridSize ?? category.gridSize}, +${result.prize.toLocaleString("fr-FR")}€`;
       const styleTag = result.styleLabel ? ` <span class="muted">(${result.styleLabel})</span>` : "";
-      return `<li><b>${driver.name}</b> <span class="id-tag">[#${driver.id}]</span> — ${category.name}${styleTag} : ${outcome}</li>`;
+      const stageTag = result.stageBonus ? ` <span class="good">(+${result.stageBonus} pts Super-Spéciale)</span>` : "";
+      return `<li><b>${driver.name}</b> <span class="id-tag">[#${driver.id}]</span> — ${category.name}${styleTag} : ${outcome}${stageTag}</li>`;
     }
     case "rival-scout-sign":
       return `<li class="muted">${entry.agencyName} signe ${entry.driverName} avant toi.</li>`;
@@ -387,9 +541,17 @@ function logEntry(entry) {
     case "recruit-established":
       return `<li class="highlight-line">${entry.driverName} (${entry.category.name}) rejoint ton agence${entry.wasRivalManaged ? `, débauché à ${entry.previousAgencyName}` : ""}.</li>`;
     case "random-event":
-      return `<li class="${entry.tone === "good" ? "good" : entry.tone === "bad" ? "warn-text" : "muted"}">${entry.text}</li>`;
+      return `<li class="${entry.tone === "good" ? "good" : entry.tone === "bad" ? "warn-text" : "muted"}"><b>${entry.title}</b> — ${entry.text}</li>`;
     case "season-champion-team":
       return `<li class="highlight-line">Titre écurie : ${entry.teamName} est champion de ${entry.category.name} (saison ${entry.seasonNumber}).</li>`;
+    case "sponsor-contract-ended":
+      return `<li class="muted">Le contrat avec ${entry.sponsorName} arrive à échéance.</li>`;
+    case "driver-trait-acquired": {
+      const trait = DRIVER_TRAITS[entry.traitId];
+      const replaced = entry.replacedTraitId ? DRIVER_TRAITS[entry.replacedTraitId] : null;
+      const replacedText = replaced ? ` (remplace ${replaced.label})` : "";
+      return `<li class="highlight-line">${entry.driverName} développe un nouveau trait : <b>${trait.label}</b>${replacedText} (saison ${entry.seasonNumber}).</li>`;
+    }
     default:
       return "";
   }
@@ -400,6 +562,61 @@ function logEntry(entry) {
 function withSecondaryTerms(driver, getter) {
   if (!driver.secondarySeats?.length) return "";
   return ` (${driver.secondarySeats.map(getter).join(", ")})`;
+}
+
+// Fixed-width, icon-only strip pinned at the very left of "Mes pilotes" — a glance-only status
+// summary (blessé, leader du championnat, sans contrat d'agence, sans écurie) that must NOT
+// reshuffle the table as icons come and go per driver, same fixed-header-width trick already
+// used for .col-talent-action (Talents).
+function driverStatusIcons(driver, team, position) {
+  const icons = [];
+  if ((driver.injuryWeeksRemaining ?? 0) > 0) {
+    icons.push(`<span title="Blessé — ${driver.injuryWeeksRemaining} semaine(s) restante(s)">🤕</span>`);
+  }
+  if (driver.categoryId && position === 1) {
+    icons.push(`<span title="Leader du championnat">🥇</span>`);
+  }
+  if (!driver.contract) {
+    icons.push(`<span title="Sans contrat d'agence — risque de départ">✍️</span>`);
+  }
+  if (!team) {
+    icons.push(`<span title="Sans écurie — ne court pas">🪑</span>`);
+  }
+  if (driver.pendingSubstituteOffer) {
+    const o = driver.pendingSubstituteOffer;
+    icons.push(`<span title="Offre exceptionnelle — ${o.teamName} (${o.categoryName})">🌟</span>`);
+  }
+  const lastResult = driver.careerResults?.[driver.careerResults.length - 1];
+  if (lastResult && !lastResult.dnf && lastResult.position <= 3) {
+    icons.push(`<span title="Podium à la dernière course (P${lastResult.position})">🏆</span>`);
+  }
+  if (driver.contract && driver.contract.weeksRemaining <= 4) {
+    icons.push(`<span title="Fin de contrat d'agence proche — ${driver.contract.weeksRemaining} semaine(s) restante(s)">⏳</span>`);
+  }
+  // Same threshold as the persistent poachRiskLine banner (layout.js) — no new game logic, just
+  // surfacing the same signal directly on the row instead of only in the top banner's name list.
+  if ((driver.agencyRelationship ?? 0) < POACH_WARNING_THRESHOLD) {
+    icons.push(`<span title="Relation critique — risque de débauchage">⚠️</span>`);
+  }
+  const form = driver.form ?? 50;
+  if (form > 80) {
+    icons.push(`<span title="Forme exceptionnelle (${Math.round(form)}/100)">😃</span>`);
+  } else if (form <= 20) {
+    icons.push(`<span title="Mauvaise forme (${Math.round(form)}/100)">😞</span>`);
+  }
+  if (driver.categoryId && (driver.seasonHistory?.length ?? 0) === 0) {
+    icons.push(`<span title="Recrue — première saison en piste">🌱</span>`);
+  }
+  return icons.join(" ");
+}
+
+// The most recent COMPLETED season's final classification — mid-season stint rows
+// (recordSeasonStint, team.js) always carry championshipPosition: null, only the season-end
+// summary row (standings.js rollover) fills it in, so filtering those out and taking the last
+// one gives the last season the driver actually finished, regardless of mid-season team changes.
+function previousSeasonPosition(driver) {
+  const completed = (driver.seasonHistory ?? []).filter((h) => h.championshipPosition != null);
+  return completed.length > 0 ? completed[completed.length - 1] : null;
 }
 
 function driverTableRow(state, driver) {
@@ -429,9 +646,14 @@ function driverTableRow(state, driver) {
   // rollover — standings.js), not the agency contract's — a separate, weeks-based duration
   // shown instead in the driver detail view's contract line.
   const contractEnd = team ? `Dans ${racesUntilSeasonEnd(state, driver.categoryId)} course(s) (fin de saison)` : "—";
+  const prevSeason = previousSeasonPosition(driver);
+  const prevPositionCell = prevSeason
+    ? `<td class="${positionColorClass(prevSeason.championshipPosition, pointsTableFor(CATEGORY_BY_ID[prevSeason.categoryId], prevSeason.classId))}">P${prevSeason.championshipPosition}</td>`
+    : `<td class="muted">—</td>`;
 
   return `
     <tr data-action="view-driver" data-id="${driver.id}" class="clickable-row">
+      <td class="col-status-icons">${driverStatusIcons(driver, team, position)}</td>
       <td>${driver.name} ${driverIdTag(driver)}</td>
       <td>${driver.sex}, ${driver.age}</td>
       <td>${driverStatusLabel(driver, category)}</td>
@@ -442,6 +664,7 @@ function driverTableRow(state, driver) {
       <td>${wins}</td>
       <td>${podiums}</td>
       <td>${positionLabel}</td>
+      ${prevPositionCell}
       <td>${pointsLabel}</td>
       <td>${value.toLocaleString("fr-FR")}€</td>
       <td>${salary}</td>
@@ -461,12 +684,13 @@ export function renderMyDrivers(state) {
       <table class="table wide">
         <thead>
           <tr>
+            <th class="col-status-icons"></th>
             <th>Nom</th><th>Sexe, Âge</th><th>Statut</th><th>Catégorie</th><th>Écurie</th><th>Niveau</th><th>Courses</th><th>Victoires</th><th>Podiums</th>
-            <th>Pos. champ.</th><th>Points</th><th>Valeur</th><th>Salaire</th><th>Fin contrat</th>
+            <th>Pos. champ.</th><th title="Classement final de la dernière saison terminée">Classement préc.</th><th>Points</th><th>Valeur</th><th>Salaire</th><th>Fin contrat</th>
             <th>Rel. agence</th><th>Rel. équipe</th>
           </tr>
         </thead>
-        <tbody>${rows || `<tr><td class="muted" colspan="16">Aucun pilote signé pour l'instant.</td></tr>`}</tbody>
+        <tbody>${rows || `<tr><td class="muted" colspan="18">Aucun pilote signé pour l'instant.</td></tr>`}</tbody>
       </table>
     </div>`;
 }
@@ -551,7 +775,7 @@ function prospectDetail(state, driver) {
         ${compareToggleButton("toggle-compare-driver", driver.id, state.ui.compareDriverIds ?? [], "compare-push-right")}
       </div>
     </div>
-    ${superStatSection(driver, driver.scouted)}
+    ${superStatSection(driver, driver.scouted ? "range" : false)}
     <h3>Attributs</h3>
     <div class="card attributes-card">
       ${ATTRIBUTE_GROUPS.map((g) => prospectAttributeSection(driver, g)).join("")}
@@ -561,18 +785,35 @@ function prospectDetail(state, driver) {
 }
 
 // Read-only fiche for a driver outside the player's agency (rival-managed or independent AI),
-// reached by clicking a row in Monde ▸ Pilotes — no negotiation/proposition/release actions,
-// since those only make sense for the player's own roster. Race/win/podium counts are omitted:
-// careerResults is only ever populated for player drivers (simulate.js), so it would always
-// read 0 here even for an AI driver who's actually raced and scored.
+// reached by clicking a row in Monde ▸ Pilotes or in a Championnats standings table — no
+// negotiation/proposition/release actions, since those only make sense for the player's own
+// roster. Race/win/podium counts are omitted: careerResults is only ever populated for player
+// drivers (simulate.js), so it would always read 0 here even for an AI driver who's actually
+// raced and scored. Scouting/deep-scouting/approaching a driver only ever happens from here —
+// deliberately not surfaced as extra columns in the standings tables themselves.
 function readOnlyDriverDetail(state, driver) {
   const category = CATEGORY_BY_ID[driver.categoryId];
   const team = driver.teamId ? findTeamById(state, driver.teamId) : null;
-  const rating = Math.round(overallRating(driver));
+  // Same masking convention as a scout-pool prospect (talentsRow/prospectDetail) — an AI/rival
+  // driver's stats stay hidden until the player pays to scout them (scoutRivalDriver, state.js).
+  // A driver on the player's own roster (isAI false) is never masked here.
+  const revealed = !driver.isAI || driver.scouted;
+  const rating = revealed ? Math.round(overallRating(driver)) : "?";
   const { position, points } = championshipStanding(state, driver);
   const seatLabel = team ? `${team.name} · Prestige ${prestigeStars(team.prestige)} (${team.prestige})` : `<span class="warn">Sans écurie</span>`;
   const agency = driver.agencyId ? state.rivalAgencies.find((a) => a.id === driver.agencyId) : null;
   const managedLabel = agency ? `Géré par ${agency.name}` : "Pilote indépendant";
+
+  const scoutBtn = !driver.scouted
+    ? `<button data-action="scout-rival" data-id="${driver.id}">Scouter (${scoutCost(state).toLocaleString("fr-FR")}€)</button>`
+    : "";
+  const deepScoutBtn = driver.scouted && !driver.scoutReveal?.traitsKnown
+    ? `<button data-action="deep-scout-rival" data-id="${driver.id}">Scouting approfondi (${deepScoutCost(state).toLocaleString("fr-FR")}€)</button>`
+    : "";
+  const approachBtn = approachCell(state, driver);
+  const actionsHtml = scoutBtn || deepScoutBtn || approachBtn
+    ? `<div class="card-actions">${scoutBtn}${deepScoutBtn}${approachBtn}</div>`
+    : "";
 
   return `
     <button data-action="back-to-roster" class="btn-red btn-large">← Retour</button>
@@ -582,11 +823,16 @@ function readOnlyDriverDetail(state, driver) {
       <div class="identity-line">${driver.sex} · ${driver.age} ans · OVR ${rating} · ${driverStatusLabel(driver, category)}</div>
       <div class="muted">${seatLabel} · ${driver.categoryId ? categoryLabel(driver.categoryId) : "Non affecté"} · ${managedLabel}</div>
       <div class="muted">Cette saison : ${points} pts · ${position ? `P${position}` : "—"} au championnat</div>
+      ${!revealed ? `<p class="unscouted">Statistiques inconnues — fais scouter ce pilote.</p>` : ""}
+      ${actionsHtml}
     </div>
+    ${revealed ? superStatSection(driver, "range") : ""}
     <h3>Attributs</h3>
     <div class="card attributes-card">
-      ${ATTRIBUTE_GROUPS.map((g) => attributeSection(driver, g)).join("")}
-    </div>`;
+      ${ATTRIBUTE_GROUPS.map((g) => (revealed ? attributeSection(driver, g) : prospectAttributeSection(driver, g))).join("")}
+    </div>
+    <h3>Traits</h3>
+    ${traitsSection(driver, driver.scoutReveal?.traitsKnown)}`;
 }
 
 export function renderDriverDetail(state) {
@@ -672,8 +918,10 @@ export function renderDriverDetail(state) {
     </div>
     ${!driver.contract ? contractNegotiationSection(state, driver) : ""}
     ${offersSection(state, driver)}
+    ${substituteOfferSection(state, driver)}
+    ${transferNegotiationSection(state, driver)}
     ${secondaryChampionshipSection(state, driver)}
-    ${superStatSection(driver, true)}
+    ${superStatSection(driver, "exact")}
     <h3>Attributs</h3>
     <div class="card attributes-card">
       ${ATTRIBUTE_GROUPS.map((g) => attributeSection(driver, g)).join("")}
@@ -692,9 +940,10 @@ export function renderDriverDetail(state) {
 
 function talentsRow(state, driver) {
   const potential = driver.scoutReveal?.potentialKnown ? driver.potential : "?";
-  const statCells = SUPER_STAT_KEYS.map(
-    (key) => `<td title="${superStatTooltip(key)}">${driver.scouted ? Math.round(superStat(driver, key)) : "?"}</td>`
-  ).join("");
+  const statCells = SUPER_STAT_KEYS.map((key) => {
+    const display = driver.scouted ? superStatDisplay(driver, key, "range") : "?";
+    return `<td title="${superStatTooltip(key)}">${display}</td>`;
+  }).join("");
   return `
     <tr data-action="view-driver" data-id="${driver.id}" class="clickable-row">
       <td>${driver.name} ${driverIdTag(driver)}</td>
@@ -710,6 +959,23 @@ function talentsRow(state, driver) {
     </tr>`;
 }
 
+function scoutSearchesSection(state) {
+  const searches = state.scoutSearches ?? [];
+  const rows = searches
+    .map((s) => `<li>Recherche en cours — disponible dans ${s.resolvesAtWeek - state.week} semaine(s)</li>`)
+    .join("");
+  const cost = scoutSearchCost(state);
+  const canAfford = state.agency.money >= cost;
+  return `
+    <div class="card">
+      <div class="card-head"><strong>Recherches en cours</strong></div>
+      ${rows ? `<ul class="muted">${rows}</ul>` : `<div class="muted">Aucune recherche en cours.</div>`}
+      <div class="card-actions">
+        <button data-action="request-scout-search" class="${canAfford ? "" : "secondary"}" ${canAfford ? "" : "disabled"}>Commander une recherche (${cost.toLocaleString("fr-FR")}€)</button>
+      </div>
+    </div>`;
+}
+
 export function renderTalents(state) {
   // Free agents only — exclude anyone already signed to this agency or managed by a rival.
   const freeAgents = state.scoutPool.filter(
@@ -718,11 +984,12 @@ export function renderTalents(state) {
   const rows = freeAgents.map((d) => talentsRow(state, d)).join("");
   return `
     <h2>Talents</h2>
+    ${scoutSearchesSection(state)}
     ${compareBar("compare-drivers", "clear-compare-drivers", state.ui.compareDriverIds ?? [], "pilote(s)")}
     <div class="table-scroll">
       <table class="table wide">
         <thead>
-          <tr><th>Nom</th><th>Sexe</th><th>Âge</th><th>Potentiel</th>${SUPER_STAT_KEYS.map((key) => `<th title="${superStatTooltip(key)}">${SUPER_STATS[key].label}</th>`).join("")}<th>Action</th></tr>
+          <tr><th>Nom</th><th>Sexe</th><th>Âge</th><th>Potentiel</th>${SUPER_STAT_KEYS.map((key) => `<th title="${superStatTooltip(key)}">${SUPER_STATS[key].label}</th>`).join("")}<th class="col-talent-action">Action</th></tr>
         </thead>
         <tbody>${rows || `<tr><td class="muted" colspan="9">Aucun talent disponible pour l'instant.</td></tr>`}</tbody>
       </table>
@@ -754,7 +1021,7 @@ function compareDriverColumn(state, driver) {
           <strong>${driver.name} ${driverIdTag(driver)}</strong>
           <span class="pill">${headerLine}</span>
         </div>
-        <div class="muted">Potentiel : <b>${potential}</b> · ${superStatsLine(driver, signed || driver.scouted)}</div>
+        <div class="muted">Potentiel : <b>${potential}</b> · ${superStatsLine(driver, signed ? "exact" : driver.scouted ? "range" : false)}</div>
         <div class="card-actions">${compareToggleButton("toggle-compare-driver", driver.id, state.ui.compareDriverIds ?? [])}</div>
       </div>
       <div class="card attributes-card">${attributesHtml}</div>
@@ -780,33 +1047,78 @@ export function renderCompareDrivers(state) {
     </div>`;
 }
 
-// Staff has no scouting/reveal system at all — its skills are already shown unconditionally,
-// so its traits follow the same convention (unlike driver traits, never gated).
 function staffTraitsLine(member) {
   return (member.traits ?? [])
     .map((id) => `<span class="pill" title="${staffTraitTooltip(id)}">${STAFF_TRAITS[id].label}</span>`)
     .join(" ");
 }
 
+// A hired member is always fully known (they work for you); a pool candidate is gated by the
+// same scouted/scoutReveal fog-of-war convention as the driver scoutPool (scoutReveal.js).
+function staffStatsSection(member, visible) {
+  if (!visible) {
+    return [
+      scoutUnknownRow("Compétence principale", null),
+      scoutUnknownRow("Compétence secondaire", null),
+      scoutUnknownRow("Communication", null),
+      scoutUnknownRow("Expérience", null),
+    ].join("");
+  }
+  const role = ROLES[member.role];
+  if (member.scoutReveal) {
+    const rangeRow = (label, key) => {
+      const actual = member.skills[key];
+      const width = member.scoutReveal.attributeWidths[key];
+      const low = Math.max(0, Math.round(actual - width / 2));
+      const high = Math.min(99, Math.round(actual + width / 2));
+      return scoutRangeRow(label, low, high, null);
+    };
+    return [
+      rangeRow(role.skillLabel, "primary"),
+      rangeRow(role.secondaryLabel, "secondary"),
+      rangeRow("Communication", "communication"),
+      rangeRow("Expérience", "experience"),
+    ].join("");
+  }
+  return [
+    statBar(role.skillLabel, member.skills.primary),
+    statBar(role.secondaryLabel, member.skills.secondary),
+    `<div class="muted">Communication ${member.skills.communication} · Expérience ${member.skills.experience}</div>`,
+  ].join("");
+}
+
 function staffCard(state, member, hired) {
   const role = ROLES[member.role];
   const compareIds = state.ui.compareStaffIds ?? [];
+  const visible = hired || member.scouted;
+  const traitsRevealed = hired || member.scoutReveal?.traitsKnown;
+  const specialtyBadge =
+    member.role === "recruiter" && member.specialty
+      ? `<span class="pill" title="Trouve plus facilement des profils ${ROLES[member.specialty].name}">Spécialité : ${ROLES[member.specialty].name}</span>`
+      : "";
+  const eliteBadge = member.elite
+    ? `<span class="pill accent" title="Profil trouvé via le réseau de contacts">⭐ Élite</span>`
+    : "";
   return `
     <div class="card">
       <div class="card-head">
         <strong>${member.name}</strong>
         <span class="pill" title="${role.description}">${role.name}</span>
+        ${specialtyBadge}
+        ${eliteBadge}
       </div>
-      ${statBar(role.skillLabel, member.skills.primary)}
-      ${statBar(role.secondaryLabel, member.skills.secondary)}
-      <div class="muted">Communication ${member.skills.communication} · Expérience ${member.skills.experience}</div>
-      ${member.traits?.length ? `<div>${staffTraitsLine(member)}</div>` : ""}
+      ${staffStatsSection(member, visible)}
+      ${traitsRevealed ? (member.traits?.length ? `<div>${staffTraitsLine(member)}</div>` : "") : `<p class="muted">Traits inconnus — nécessite un scouting approfondi.</p>`}
       <div class="muted">Salaire ${member.weeklyWage.toLocaleString("fr-FR")}€/sem</div>
       <div class="card-actions">
         ${
           hired
             ? `<button data-action="fire-staff" data-id="${member.id}" class="secondary">Licencier</button>`
-            : `<button data-action="hire-staff" data-id="${member.id}">Engager (${member.hireCost.toLocaleString("fr-FR")}€)</button>`
+            : `
+              ${!member.scouted ? `<button data-action="scout-staff" data-id="${member.id}" class="secondary">Scouter (${staffScoutCost(state).toLocaleString("fr-FR")}€)</button>` : ""}
+              ${member.scouted && !member.scoutReveal?.traitsKnown ? `<button data-action="deep-scout-staff" data-id="${member.id}" class="secondary">Scouting approfondi (${staffDeepScoutCost(state).toLocaleString("fr-FR")}€)</button>` : ""}
+              <button data-action="hire-staff" data-id="${member.id}">Engager (${member.hireCost.toLocaleString("fr-FR")}€)</button>
+            `
         }
         ${compareToggleButton("toggle-compare-staff", member.id, compareIds, "compare-push-right")}
       </div>
@@ -921,9 +1233,17 @@ export function renderCompareStaff(state) {
 }
 
 function describeFacilityEffect(facilityId, levelData) {
-  if (facilityId === "offices") return `Capacité : ${levelData.capacity} pilotes`;
+  if (facilityId === "offices") {
+    return `Capacité : ${levelData.capacity} pilotes · Commission ${Math.round(levelData.commissionRate * 100)}% · Transfert ${Math.round(levelData.transferFeeRate * 100)}% · Patience +${levelData.patienceBonus}/sem`;
+  }
   if (facilityId === "training") return `Progression ×${levelData.growthMultiplier.toFixed(2)}`;
   if (facilityId === "prestige") return `Attrait +${levelData.appealBonus} · Débauchage ×${levelData.poachFactor.toFixed(2)}`;
+  if (facilityId === "recruiterQuality") {
+    return `Vivier : ${levelData.poolSize} pilotes/mercato · Découverte +${levelData.discoveryBonus} · Précision +${levelData.precisionBonus} · Niveau de base +${levelData.qualityFloorBonus}`;
+  }
+  if (facilityId === "contactNetwork") {
+    return `Chance de profil élite : ${Math.round(levelData.eliteChance * 100)}%`;
+  }
   return "";
 }
 
@@ -934,6 +1254,7 @@ function facilityLevelStars(level, max) {
 function facilityCard(state, facilityId) {
   const meta = FACILITIES[facilityId];
   const level = state.infrastructure[facilityId];
+  const maxLevel = facilityMaxLevel(facilityId);
   const current = getFacilityLevelData(state, facilityId);
   const next = nextFacilityLevelData(state, facilityId);
   const repOk = !next || state.agency.reputation >= next.reputationRequired;
@@ -952,7 +1273,7 @@ function facilityCard(state, facilityId) {
     <div class="card">
       <div class="card-head">
         <strong>${meta.name}</strong>
-        <span class="pill" title="Niveau ${level}/${MAX_FACILITY_LEVEL}">${facilityLevelStars(level, MAX_FACILITY_LEVEL)}</span>
+        <span class="pill" title="Niveau ${level}/${maxLevel}">${facilityLevelStars(level, maxLevel)}</span>
       </div>
       <div class="muted">${meta.description}</div>
       <div class="finance-figure">Actuel : ${describeFacilityEffect(facilityId, current)}</div>
@@ -964,8 +1285,17 @@ function facilityCard(state, facilityId) {
 
 function shopCard(state, item) {
   const owned = item.type === "multiplier" && state.purchasedUpgrades.includes(item.id);
+  const cooldown = item.cooldownWeeks ? shopCooldownRemaining(state, item.id) : 0;
   const effect =
     item.type === "flat" ? `Réputation +${item.reputationBonus}` : `Réputation gagnée ×${item.reputationMultiplier}`;
+  let actionHtml;
+  if (owned) {
+    actionHtml = `<span class="pill">Déjà acheté</span>`;
+  } else if (cooldown > 0) {
+    actionHtml = `<button class="secondary" disabled>Disponible dans ${cooldown} sem.</button>`;
+  } else {
+    actionHtml = `<button data-action="buy-shop-item" data-id="${item.id}">Acheter</button>`;
+  }
   return `
     <div class="card">
       <div class="card-head">
@@ -974,13 +1304,7 @@ function shopCard(state, item) {
       </div>
       <div class="muted">${item.description}</div>
       <div class="finance-figure">${effect}</div>
-      <div class="card-actions">
-        ${
-          owned
-            ? `<span class="pill">Déjà acheté</span>`
-            : `<button data-action="buy-shop-item" data-id="${item.id}">Acheter</button>`
-        }
-      </div>
+      <div class="card-actions">${actionHtml}</div>
     </div>`;
 }
 
@@ -1072,14 +1396,21 @@ function loanSection(state) {
         <p class="muted">Disponible uniquement en cas de trésorerie critique (sous ${LOAN_ELIGIBLE_THRESHOLD.toLocaleString("fr-FR")}€).</p>
       </div>`;
   }
+  const monthOptions = LOAN_DURATION_MONTHS_OPTIONS.map(
+    (m) => `<option value="${m}" ${m === 12 ? "selected" : ""}>${m} mois (${loanWeeksForMonths(m)} sem.)</option>`
+  ).join("");
   return `
     <div class="propose-box">
       <h3>Emprunter</h3>
-      <p class="muted" title="Le prêt est remboursé automatiquement chaque semaine jusqu'à extinction. Un seul prêt actif à la fois.">Trésorerie critique — un prêt est possible pour éviter le blocage. Total à rembourser : montant × 1,25, étalé sur 15 semaines.</p>
+      <p class="muted" title="Le prêt est remboursé automatiquement chaque semaine jusqu'à extinction. Un seul prêt actif à la fois.">Trésorerie critique — un prêt est possible pour éviter le blocage. Total à rembourser : montant × 1,25, étalé sur la durée choisie.</p>
       <label class="invest-line" title="Montant emprunté, versé immédiatement. Plafonné pour éviter d'en faire un outil de croissance plutôt qu'une bouée de secours.">
         Montant
         <input type="number" min="0" max="${LOAN_MAX_AMOUNT}" step="500" data-role="loan-amount" value="${LOAN_MAX_AMOUNT}" />
         €
+      </label>
+      <label class="invest-line" title="Durée de remboursement — plus elle est courte, plus la mensualité prélevée chaque semaine est élevée.">
+        Durée
+        <select data-role="loan-months">${monthOptions}</select>
       </label>
       <button data-action="take-loan" class="secondary">Emprunter</button>
     </div>`;
@@ -1152,6 +1483,78 @@ export function renderFinances(state) {
     </div>`;
 }
 
+// Simpler than facilityCard — no reputation gate at all, purely money-gated (see lifestyle.js).
+// No upkeep either : each purchase is a one-time cost that also grants +1 réputation.
+function lifestyleCard(state, id) {
+  const meta = LIFESTYLE[id];
+  const level = state.lifestyle[id];
+  const maxLevel = lifestyleMaxLevel(id);
+  const current = getLifestyleLevelData(state, id);
+  const next = nextLifestyleLevelData(state, id);
+  const canAfford = !next || state.agency.money >= next.upgradeCost;
+
+  const nextPreview = next
+    ? `<div class="muted">Prochain palier : ${next.label} · Réputation +1</div>`
+    : "";
+
+  const actionButton = !next
+    ? `<span class="pill">Niveau maximum</span>`
+    : `<button data-action="upgrade-lifestyle" data-id="${id}" class="${canAfford ? "btn-green" : "secondary"}" ${canAfford ? "" : "disabled"}>Améliorer (${next.upgradeCost.toLocaleString("fr-FR")}€)</button>`;
+
+  return `
+    <div class="card">
+      <div class="card-head">
+        <strong>${meta.name}</strong>
+        <span class="pill" title="Niveau ${level}/${maxLevel}">${facilityLevelStars(level, maxLevel)}</span>
+      </div>
+      <div class="muted">${meta.description}</div>
+      <div class="finance-figure">Actuel : ${current.label}</div>
+      ${nextPreview}
+      <div class="card-actions">${actionButton}</div>
+    </div>`;
+}
+
+function sponsorOfferCard(offer) {
+  const tier = SPONSOR_TIERS.find((t) => t.id === offer.tierId);
+  return `
+    <div class="card">
+      <div class="card-head"><strong>${offer.name}</strong><span class="pill">${tier.label}</span></div>
+      <div class="finance-figure">${offer.weeklyIncome.toLocaleString("fr-FR")}€/sem</div>
+      <div class="muted">Prime victoire ${offer.winBonus.toLocaleString("fr-FR")}€ · podium ${offer.podiumBonus.toLocaleString("fr-FR")}€</div>
+      <div class="muted">Durée ${offer.durationWeeks} semaines</div>
+      <div class="card-actions">
+        <button data-action="sign-sponsor" data-id="${offer.id}" class="btn-green">Signer</button>
+      </div>
+    </div>`;
+}
+
+function activeSponsorCard(state) {
+  const s = state.activeSponsor;
+  if (!s) return `<p class="muted">Aucun sponsor sous contrat — choisis une offre ci-dessous.</p>`;
+  const tier = SPONSOR_TIERS.find((t) => t.id === s.tierId);
+  return `
+    <div class="card">
+      <div class="card-head"><strong>${s.name}</strong><span class="pill accent">${tier.label}</span></div>
+      <div class="finance-figure">${s.weeklyIncome.toLocaleString("fr-FR")}€/sem</div>
+      <div class="muted">Prime victoire ${s.winBonus.toLocaleString("fr-FR")}€ · podium ${s.podiumBonus.toLocaleString("fr-FR")}€</div>
+      <div class="muted">${s.weeksRemaining} semaine(s) restante(s)</div>
+      <div class="card-actions">
+        <button data-action="terminate-sponsor" class="secondary">Résilier</button>
+      </div>
+    </div>`;
+}
+
+function sponsorsSection(state) {
+  return `
+    <h3>Sponsoring</h3>
+    <div class="card-grid">${activeSponsorCard(state)}</div>
+    ${
+      !state.activeSponsor
+        ? `<div class="card-grid">${state.sponsorPool.map((o) => sponsorOfferCard(o)).join("")}</div>`
+        : ""
+    }`;
+}
+
 export function renderInvestments(state) {
   return `
     <h2>Investissement</h2>
@@ -1163,11 +1566,21 @@ export function renderInvestments(state) {
     <h3>Boutique de l'agence</h3>
     <div class="card-grid">
       ${SHOP_ITEMS.map((item) => shopCard(state, item)).join("")}
+    </div>
+
+    ${sponsorsSection(state)}
+
+    <h3>Vie personnelle</h3>
+    <div class="card-grid">
+      ${Object.keys(LIFESTYLE).map((id) => lifestyleCard(state, id)).join("")}
     </div>`;
 }
 
-const NEWS_TYPES = new Set(["rival-scout-sign", "rival-poach", "recruit-established", "random-event"]);
-const RESULT_TYPES = new Set(["player-result", "season-champion-driver", "season-champion-team"]);
+const NEWS_TYPES = new Set(["rival-scout-sign", "rival-poach", "recruit-established", "random-event", "sponsor-contract-ended"]);
+// random-event is shared with NEWS_TYPES on purpose — an event outcome is real gameplay news
+// AND a result worth detailing (per feedback: "Résultats" only ever showed race results,
+// dropping every dilemma/event outcome even though those affect money/reputation/relations too).
+const RESULT_TYPES = new Set(["player-result", "season-champion-driver", "season-champion-team", "random-event", "driver-trait-acquired"]);
 
 export function renderNews(state) {
   const entries = state.log.filter((e) => NEWS_TYPES.has(e.type));

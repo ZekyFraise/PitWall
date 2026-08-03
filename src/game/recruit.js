@@ -1,7 +1,7 @@
-import { CATEGORY_BY_ID, PRO_TIER_THRESHOLD, SEASON_WEEKS, PRO_COMMISSION_RATE } from "./data.js";
+import { CATEGORY_BY_ID, PRO_TIER_THRESHOLD, SEASON_WEEKS } from "./data.js";
 import { overallRating } from "./driver.js";
 import { releaseSeatAndBackfill } from "./team.js";
-import { rosterCapacity, agencyAppeal } from "./infrastructure.js";
+import { rosterCapacity, agencyAppeal, officeCommissionRate } from "./infrastructure.js";
 import { bumpRivalReputation } from "./rivals.js";
 import { recordTransaction } from "./finance.js";
 
@@ -60,7 +60,7 @@ export function approachDriver(state, driverId, rng, { force = false } = {}) {
 
   const isPro = category.tier >= PRO_TIER_THRESHOLD;
   driver.contract = isPro
-    ? { weeksRemaining: SEASON_WEEKS, weeklyWage: 0, commissionRate: PRO_COMMISSION_RATE }
+    ? { weeksRemaining: SEASON_WEEKS, weeklyWage: 0, commissionRate: officeCommissionRate(state) }
     : { weeksRemaining: SEASON_WEEKS, weeklyWage: Math.round(cost / 20), commissionRate: 0 };
   driver.weeksWithoutContract = 0;
   driver.isPro = isPro;

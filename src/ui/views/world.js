@@ -1,10 +1,12 @@
-import { CATEGORIES, CATEGORY_BY_ID, TRACK_STYLES } from "../../game/data.js";
+import { CATEGORIES, CATEGORY_BY_ID, TRACK_STYLES, pointsTableFor } from "../../game/data.js";
 import { getDriverById, overallRating } from "../../game/driver.js";
 import { rosterCapacity } from "../../game/infrastructure.js";
 import { approachTerms } from "../../game/recruit.js";
 import { ROLES } from "../../game/staff.js";
+import { staffScoutCost, staffDeepScoutCost } from "../../game/state.js";
 import { POINTS_TABLE } from "../../game/standings.js";
 import { STAFF_TRAITS, staffTraitTooltip } from "../../game/traits.js";
+import { agencyTeamRelationship, AGENCY_TEAM_RELATIONSHIP_DEFAULT } from "../../game/team.js";
 
 const STAFF_ROLE_CATEGORY = {
   recruiter: "Sportif",
@@ -80,22 +82,24 @@ function bestClassifiedPosition(rounds, matches) {
   }, Infinity);
 }
 
-function driverRoundCell(rounds, roundIndex, driverId) {
+function driverRoundCell(rounds, roundIndex, driverId, pointsTable) {
   const round = rounds[roundIndex];
   if (!round) return `<td class="muted">—</td>`;
   const entry = round.find((e) => e.driverIds.includes(driverId));
   if (!entry) return `<td class="muted">—</td>`;
   if (entry.dnf) return `<td class="warn">Ret</td>`;
-  return `<td>${round.indexOf(entry) + 1}</td>`;
+  const position = round.indexOf(entry) + 1;
+  return `<td class="${positionColorClass(position, pointsTable)}">${position}</td>`;
 }
 
-function carRoundCell(rounds, roundIndex, carId) {
+function carRoundCell(rounds, roundIndex, carId, pointsTable) {
   const round = rounds[roundIndex];
   if (!round) return `<td class="muted">—</td>`;
   const idx = round.findIndex((e) => e.carId === carId);
   if (idx === -1) return `<td class="muted">—</td>`;
   if (round[idx].dnf) return `<td class="warn">Ret</td>`;
-  return `<td>${idx + 1}</td>`;
+  const position = idx + 1;
+  return `<td class="${positionColorClass(position, pointsTable)}">${position}</td>`;
 }
 
 // Round-derived carNumber is only known once at least one round has been captured this season
@@ -107,13 +111,13 @@ function liveCarNumber(teamById, carId) {
   return team?.carNumbers?.[Number(carIndexStr)] ?? null;
 }
 
-function teamRoundPoints(round, teamId, constructorsTopN) {
+function teamRoundPoints(round, teamId, constructorsTopN, pointsTable) {
   if (!round) return null;
   let count = 0;
   let sum = 0;
   round.forEach((e, idx) => {
     if (e.teamId !== teamId) return;
-    const pts = POINTS_TABLE[idx] ?? 0;
+    const pts = pointsTable[idx] ?? 0;
     if (pts === 0 || count >= constructorsTopN) return;
     sum += pts;
     count += 1;
@@ -121,9 +125,34 @@ function teamRoundPoints(round, teamId, constructorsTopN) {
   return sum;
 }
 
-function teamRoundCell(rounds, roundIndex, teamId, constructorsTopN) {
-  const pts = teamRoundPoints(rounds[roundIndex], teamId, constructorsTopN);
+function teamRoundCell(rounds, roundIndex, teamId, constructorsTopN, pointsTable) {
+  const pts = teamRoundPoints(rounds[roundIndex], teamId, constructorsTopN, pointsTable);
   return pts === null ? `<td class="muted">—</td>` : `<td>${pts}</td>`;
+}
+
+// Gold/silver/bronze for the podium, white while still inside the scoring positions (as many as
+// this category/class's own pointsTable awards — see pointsTableFor, data.js, which now varies:
+// karting/WEC Hypercar pay fewer positions than the standard FIA top 10), gray once out of the
+// points — same convention for drivers, teams, and cars. Defaults to the standard table so
+// existing callers that don't yet pass one (e.g. agency.js's own-driver history cell) keep
+// working.
+export function positionColorClass(position, pointsTable = POINTS_TABLE) {
+  if (position === 1) return "pos-gold";
+  if (position === 2) return "pos-silver";
+  if (position === 3) return "pos-bronze";
+  if (position <= pointsTable.length) return "pos-points";
+  return "pos-no-points";
+}
+
+// The classement's own leftmost "Pos." column only ever uses gold/silver/bronze/white — every
+// row shown there is already part of the classification, so a "grayed out, no points" state
+// (unlike the per-round cells above, where a specific round's result can genuinely fall outside
+// the points) doesn't apply.
+function overallPositionColorClass(position) {
+  if (position === 1) return "pos-gold";
+  if (position === 2) return "pos-silver";
+  if (position === 3) return "pos-bronze";
+  return "pos-points";
 }
 
 function roundHeaderCells(category, roundCount) {
@@ -153,6 +182,7 @@ function classificationBlock(state, category, classId, label) {
   const carClassification = category.carClassification === true;
   const constructorsEnabled = category.constructorsEnabled !== false;
   const constructorsTopN = category.constructorsTopN ?? Infinity;
+  const pointsTable = pointsTableFor(category, classId);
   const suffix = label ? `— ${label}` : `— ${category.name}`;
   const teamNameById = new Map(classTeams.map((t) => [t.id, t.name]));
   const teamById = new Map(classTeams.map((t) => [t.id, t]));
@@ -186,8 +216,8 @@ function classificationBlock(state, category, classId, label) {
     .map(({ id, name, pts }, i) => {
       const isPlayer = state.drivers.some((d) => d.id === id);
       let cells = "";
-      for (let r = 0; r < category.roundCount; r++) cells += driverRoundCell(rounds, r, id);
-      return `<tr class="${isPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${name} ${driverIdTag({ id })}</td>${cells}<td>${pts}</td></tr>`;
+      for (let r = 0; r < category.roundCount; r++) cells += driverRoundCell(rounds, r, id, pointsTable);
+      return `<tr data-action="view-driver" data-id="${id}" class="clickable-row ${isPlayer ? "highlight-row" : ""}"><td class="${overallPositionColorClass(i + 1)}">${i + 1}</td><td>${name} ${driverIdTag({ id })}</td>${cells}<td>${pts}</td></tr>`;
     })
     .join("");
 
@@ -221,8 +251,8 @@ function classificationBlock(state, category, classId, label) {
         const carNumber = last?.carNumber ?? (isLive ? liveCarNumber(teamById, carId) : null);
         const numberLabel = carNumber != null ? ` #${carNumber}` : "";
         let cells = "";
-        for (let r = 0; r < category.roundCount; r++) cells += carRoundCell(rounds, r, carId);
-        return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${teamName}${numberLabel}</td>${cells}<td>${pts}</td></tr>`;
+        for (let r = 0; r < category.roundCount; r++) cells += carRoundCell(rounds, r, carId, pointsTable);
+        return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td class="${overallPositionColorClass(i + 1)}">${i + 1}</td><td>${teamName}${numberLabel}</td>${cells}<td>${pts}</td></tr>`;
       })
       .join("");
   } else if (constructorsEnabled) {
@@ -241,8 +271,8 @@ function classificationBlock(state, category, classId, label) {
         const hasPlayer = isLive && classTeams.some((t) => t.id === teamId && t.seats.some((s) => state.drivers.some((d) => d.id === s.driverId)));
         const teamName = teamNameById.get(teamId) ?? "—";
         let cells = "";
-        for (let r = 0; r < category.roundCount; r++) cells += teamRoundCell(rounds, r, teamId, constructorsTopN);
-        return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td>${i + 1}</td><td>${teamName}</td>${cells}<td>${pts}</td></tr>`;
+        for (let r = 0; r < category.roundCount; r++) cells += teamRoundCell(rounds, r, teamId, constructorsTopN, pointsTable);
+        return `<tr class="${hasPlayer ? "highlight-row" : ""}"><td class="${overallPositionColorClass(i + 1)}">${i + 1}</td><td>${teamName}</td>${cells}<td>${pts}</td></tr>`;
       })
       .join("");
   }
@@ -307,7 +337,10 @@ export function renderWorldChampionships(state) {
   `;
 }
 
-function approachCell(state, driver) {
+// Exported for reuse in a driver's read-only fiche (readOnlyDriverDetail, agency.js) — same
+// button, same eligibility rules, so approaching a driver behaves identically whether reached
+// from Monde ▸ Pilotes or from their own page.
+export function approachCell(state, driver) {
   if (state.drivers.some((d) => d.id === driver.id)) return "";
   if (state.drivers.length >= rosterCapacity(state)) {
     return `<button class="secondary small" disabled>Effectif complet</button>`;
@@ -365,7 +398,7 @@ export function renderWorldDrivers(state) {
         <td>${driver.raceNumber != null ? `#${driver.raceNumber}` : "—"}</td>
         <td>${driver.name} ${driverIdTag(driver)}</td>
         <td>${driver.age}</td>
-        <td>${Math.round(overallRating(driver))}</td>
+        <td>${driver.isAI && !driver.scouted ? "?" : Math.round(overallRating(driver))}</td>
         <td>${category.name}</td>
         <td>${team.name}</td>
         <td>${statusTag(state, driver)}</td>
@@ -390,6 +423,21 @@ export function renderWorldDrivers(state) {
         <tbody>${rowsHtml || `<tr><td class="muted" colspan="8">Aucun pilote.</td></tr>`}</tbody>
       </table>
     </div>`;
+}
+
+// Compact tier classes shared with driverTableRow's agency/team relationship cells — only
+// shown once it has actually moved away from the neutral default, so untouched teams (the vast
+// majority the player never deals with) don't clutter every card with a meaningless "60".
+function relationColorClass(value) {
+  if (value >= 140) return "rel-good";
+  if (value >= 80) return "rel-mid";
+  return "rel-bad";
+}
+
+function agencyRelationPill(state, teamId) {
+  const value = agencyTeamRelationship(state, teamId);
+  if (value === AGENCY_TEAM_RELATIONSHIP_DEFAULT) return "";
+  return `<span class="pill ${relationColorClass(value)}" title="Relation entre l'agence et cette écurie — plus elle est élevée, plus l'écurie accepte facilement vos pilotes.">Relation agence : ${Math.round(value)}</span>`;
 }
 
 export function renderWorldTeams(state) {
@@ -442,6 +490,7 @@ export function renderWorldTeams(state) {
             <span class="pill">Prestige ${prestigeStars(team.prestige)} (${team.prestige})</span>
             ${team.carBrand ? `<span class="pill">${team.carBrand}</span>` : ""}
             ${team.subClass ? `<span class="pill accent">${category.classes.find((c) => c.id === team.subClass)?.label ?? team.subClass}</span>` : ""}
+            ${agencyRelationPill(state, team.id)}
           </div>
           ${occupants}
         </div>`;
@@ -566,24 +615,41 @@ export function renderWorldStaff(state) {
   const rowsHtml = pageRows
     .map(({ member, hired, owner, category }) => {
       const role = ROLES[member.role];
+      const visible = hired || Boolean(owner) || member.scouted;
+      const statCell = (key) => {
+        if (!visible) return "?";
+        if (!member.scoutReveal) return `${member.skills[key]}`;
+        const actual = member.skills[key];
+        const width = member.scoutReveal.attributeWidths[key];
+        const low = Math.max(0, Math.round(actual - width / 2));
+        const high = Math.min(99, Math.round(actual + width / 2));
+        return low === high ? `${low}` : `${low}-${high}`;
+      };
       const statusHtml = hired
         ? `<span class="pill accent">${state.agency.name}</span>`
         : owner
           ? `<span class="pill">${owner.name}</span>`
           : `<span class="pill muted">Disponible</span>`;
       const actionHtml = !hired && !owner
-        ? `<button data-action="hire-staff" data-id="${member.id}" class="small">Recruter (${member.hireCost.toLocaleString("fr-FR")}€)</button>`
+        ? `
+          ${!member.scouted ? `<button data-action="scout-staff" data-id="${member.id}" class="small secondary">Scouter (${staffScoutCost(state).toLocaleString("fr-FR")}€)</button>` : ""}
+          ${member.scouted && !member.scoutReveal?.traitsKnown ? `<button data-action="deep-scout-staff" data-id="${member.id}" class="small secondary">Approfondi (${staffDeepScoutCost(state).toLocaleString("fr-FR")}€)</button>` : ""}
+          <button data-action="hire-staff" data-id="${member.id}" class="small">Recruter (${member.hireCost.toLocaleString("fr-FR")}€)</button>
+        `
         : "";
-      const traitsHtml = (member.traits ?? [])
-        .map((id) => `<span class="pill" title="${staffTraitTooltip(id)}">${STAFF_TRAITS[id].label}</span>`)
-        .join(" ");
+      const traitsRevealed = hired || Boolean(owner) || member.scoutReveal?.traitsKnown;
+      const traitsHtml = traitsRevealed
+        ? (member.traits ?? []).map((id) => `<span class="pill" title="${staffTraitTooltip(id)}">${STAFF_TRAITS[id].label}</span>`).join(" ")
+        : `<span class="muted">?</span>`;
+      const specialtyTitle = member.role === "recruiter" && member.specialty ? ` — Spécialité : ${ROLES[member.specialty].name}` : "";
+      const eliteBadge = member.elite ? ` <span class="pill accent" title="Profil trouvé via le réseau de contacts">⭐</span>` : "";
       return `
       <tr>
-        <td>${member.name}</td>
+        <td>${member.name}${eliteBadge}</td>
         <td>${category}</td>
-        <td title="${role.description}">${role.name}</td>
-        <td>${member.skills.primary}</td>
-        <td>${member.skills.secondary}</td>
+        <td title="${role.description}${specialtyTitle}">${role.name}</td>
+        <td>${statCell("primary")}</td>
+        <td>${statCell("secondary")}</td>
         <td>${traitsHtml}</td>
         <td>${member.weeklyWage.toLocaleString("fr-FR")}€</td>
         <td>${statusHtml}</td>

@@ -1,3 +1,9 @@
+// Shared by the whole FIA single-seater ladder (F4/F3/F2/F1) — in reality they've converged on
+// the same top-10 scale, so differentiating them from each other would be less realistic, not
+// more. Karting and WEC/WRC get their own tables below, where the real-world disciplines
+// actually do diverge (smaller/less formal grids, endurance class-size gaps, rally's Power Stage).
+const STANDARD_POINTS_TABLE = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+
 export const CATEGORIES = [
   {
     id: "karting",
@@ -11,6 +17,9 @@ export const CATEGORIES = [
     variableSeats: { min: 1, max: 4 },
     constructorsTopN: 2,
     brands: ["Tony Kart", "CRG", "Birel ART", "Sodikart", "Kosmic", "Praga"],
+    // Grassroots/regional-style scoring — a much shorter payout than the FIA ladder above it,
+    // reflecting karting's status as the entry rung rather than a full pro championship.
+    pointsTable: [20, 16, 13, 11, 9, 7, 5, 3],
   },
   {
     id: "f4",
@@ -24,6 +33,7 @@ export const CATEGORIES = [
     variableSeats: { min: 2, max: 4 },
     constructorsTopN: 2,
     fixedBrand: "Tatuus",
+    pointsTable: STANDARD_POINTS_TABLE,
   },
   {
     id: "f3",
@@ -36,6 +46,7 @@ export const CATEGORIES = [
     gridSize: 36,
     seatsPerTeam: 3,
     fixedBrand: "Dallara",
+    pointsTable: STANDARD_POINTS_TABLE,
   },
   {
     id: "f2",
@@ -48,6 +59,7 @@ export const CATEGORIES = [
     gridSize: 24,
     seatsPerTeam: 2,
     fixedBrand: "Dallara",
+    pointsTable: STANDARD_POINTS_TABLE,
   },
   {
     id: "f1",
@@ -60,6 +72,7 @@ export const CATEGORIES = [
     gridSize: 20,
     seatsPerTeam: 2,
     brands: ["Ferrari", "Mercedes", "Red Bull", "McLaren", "Aston Martin", "Alpine", "Williams", "RB", "Sauber", "Haas"],
+    pointsTable: STANDARD_POINTS_TABLE,
   },
   {
     id: "wec",
@@ -80,6 +93,9 @@ export const CATEGORIES = [
         teamCount: 9,
         carsPerTeam: 2,
         strictUnique: true,
+        // Grid tops out around 18 cars — a top-10 table would pay out almost the whole field,
+        // so Hypercar gets a shorter, more front-loaded table instead.
+        pointsTable: [25, 20, 16, 13, 10, 8, 6, 4],
       },
       {
         id: "gt3",
@@ -90,6 +106,8 @@ export const CATEGORIES = [
         ],
         teamCount: 18,
         carsPerTeam: 2,
+        // Twice the grid of Hypercar — a full top-10 stays meaningful here.
+        pointsTable: STANDARD_POINTS_TABLE,
       },
     ],
   },
@@ -106,8 +124,18 @@ export const CATEGORIES = [
     constructorsEnabled: false,
     branch: true,
     brands: ["Toyota", "Hyundai", "Ford", "Skoda", "Citroën"],
+    pointsTable: STANDARD_POINTS_TABLE,
+    // Real WRC's signature bonus: the top 5 on the rally's closing Power Stage earn extra points
+    // on top of the overall result, independent of final classification (see
+    // applyPowerStageBonus, standings.js).
+    powerStageBonus: [5, 4, 3, 2, 1],
   },
 ];
+
+export function pointsTableFor(category, classId = null) {
+  if (classId) return category.classes.find((c) => c.id === classId).pointsTable;
+  return category.pointsTable;
+}
 
 export const SEASON_WEEKS = 52;
 export const WINTER_MERCATO_WEEKS = [1, 2, 3, 4, 5, 6];
@@ -195,7 +223,41 @@ export const CATEGORY_EMOJI = {
 export const FIELD_STRENGTH_BY_TIER = { 0: 32, 1: 48, 2: 60, 3: 72, 4: 88 };
 
 export const PRO_TIER_THRESHOLD = 3;
-export const PRO_COMMISSION_RATE = 0.25;
+
+// Shared by every reputation source (season-end bonus, event/dilemma outcomes, boutique agence
+// purchases — standings.js/events.js/infrastructure.js) rather than each mutating
+// state.agency.reputation directly. The dominant runaway source turned out to be the season-end
+// bonus (rolloverIfNeeded in standings.js): it's awarded PER DRIVER in the standings, so a full
+// multi-driver roster stacks several +1..+10 grants at every season change — a passive 6-driver
+// squad that never touches a dilemma or the shop was still reaching ~45 reputation (past the F2
+// gate) after 5 seasons on raw addition alone. This diminishing-returns curve keeps early
+// reputation easy to build (a new agency proving itself) while taxing each additional point
+// increasingly hard past a comfortable level, regardless of how many simultaneous sources
+// (roster size, dilemmas, shop) the player happens to trigger. Denominator tuned so the 0.25
+// floor kicks in around reputation 30, just under the F2 threshold (45) — reaching pro tier
+// should take sustained effort, not one lucky multi-driver season. Negative deltas (penalties)
+// are never softened — a scandal should sting exactly as hard as written.
+export function applyReputationGain(state, rawDelta) {
+  if (rawDelta <= 0) {
+    state.agency.reputation = Math.max(0, state.agency.reputation + rawDelta);
+    return;
+  }
+  const scale = Math.max(0.25, 1 - state.agency.reputation / 40);
+  state.agency.reputation = Math.max(0, state.agency.reputation + rawDelta * scale);
+}
+
+// Optional one-time founder perk chosen at agency creation — each maps to bumping ONE existing
+// facility (infrastructure.js) to its 2nd tier for free, exactly as if the player had just
+// bought that upgrade (same bonus, same recurring upkeep from week 1). "none" preserves the
+// exact starting state (all facilities at level 1) as the default/first option.
+export const AGENCY_SPECIALTIES = [
+  { id: "none", label: "Aucune spécialité", description: "Un départ classique, sans bonus ni charge supplémentaire.", facilityId: null },
+  { id: "former-driver", label: "Ancien pilote", description: "Ta carrière sur circuit accélère la progression de tes protégés (Centre d'entraînement niveau 2).", facilityId: "training" },
+  { id: "manager", label: "Gestionnaire chevronné", description: "Une organisation déjà rodée : capacité et commission améliorées (Bureaux niveau 2).", facilityId: "offices" },
+  { id: "well-connected", label: "Bien introduit", description: "Ton carnet d'adresses attire déjà les pilotes établis (Bureau de standing niveau 2).", facilityId: "prestige" },
+  { id: "talent-scout", label: "Chasseur de talents", description: "Un œil aiguisé pour repérer les meilleurs profils dès le départ (Qualité des recruteurs niveau 2).", facilityId: "recruiterQuality" },
+  { id: "well-networked", label: "Réseau solide", description: "Des contacts dans le recrutement de staff (Réseau de contacts niveau 2).", facilityId: "contactNetwork" },
+];
 
 export const RIVAL_AGENCIES = [
   { id: "nordwind", name: "Nordwind Talent" },

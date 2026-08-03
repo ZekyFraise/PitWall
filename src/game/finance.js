@@ -24,6 +24,10 @@ export const TRANSACTION_LABELS = {
   "dev-tool": "Outils développeur",
   loan: "Prêt",
   "loan-repayment": "Remboursement de prêt",
+  "scout-search": "Recherche de pilote",
+  "lifestyle-upgrade": "Vie personnelle",
+  "sponsor-income": "Revenus sponsoring",
+  "sponsor-bonus": "Primes sponsor",
 };
 
 export function recordTransaction(state, type, label, amount) {

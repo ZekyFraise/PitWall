@@ -2,8 +2,9 @@ import { generateAIDriver, findTeamById, usedDriverNumbersInCategory, benchDrive
 import { getDriverById, overallRating } from "./driver.js";
 import { driverMarketValue } from "./driverStats.js";
 import { recordTransaction } from "./finance.js";
-import { CATEGORY_BY_ID } from "./data.js";
+import { CATEGORY_BY_ID, SEASON_WEEKS } from "./data.js";
 import { reputationMultiplier } from "./infrastructure.js";
+import { checkSeasonTraitMilestone } from "./traits.js";
 
 // Reputation now moves only at season end, scaled by final championship position — not per
 // individual race — so a title fight matters more than any single race result.
@@ -16,8 +17,15 @@ function seasonReputationBonus(position) {
   return 0;
 }
 
+// Kept exported for backward compatibility — no longer read internally by applyPoints, which
+// now takes its table from the caller (pointsTableFor, data.js) since each category/class has
+// its own scale.
 export const POINTS_TABLE = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 const RETIREMENT_CHANCE = 0.2;
+// Independent jitter applied to the same race score to derive the WRC "Super-Spéciale" (Power
+// Stage) ranking — same scale as formBonus/trackBonus in simulate.js, deliberately modest so the
+// stage ranking correlates with overall pace without being identical to the finishing order.
+const POWER_STAGE_JITTER = 6;
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -81,11 +89,11 @@ export function recordRoundResult(state, categoryId, classId, scored) {
 }
 
 export function applyPoints(state, categoryId, rankedEntrants, options = {}) {
-  const { classId = null, constructorsEnabled = true, constructorsTopN = Infinity, carClassification = false } = options;
+  const { classId = null, constructorsEnabled = true, constructorsTopN = Infinity, carClassification = false, pointsTable = POINTS_TABLE } = options;
   const standings = ensureStandings(state, categoryId, classId);
   const teamScorerCount = {};
   rankedEntrants.forEach((entrant, index) => {
-    const points = POINTS_TABLE[index] ?? 0;
+    const points = pointsTable[index] ?? 0;
     if (points === 0) return;
     for (const driverId of entrant.driverIds) {
       standings.driverPoints[driverId] = (standings.driverPoints[driverId] ?? 0) + points;
@@ -101,6 +109,29 @@ export function applyPoints(state, categoryId, rankedEntrants, options = {}) {
     }
   });
   standings.race += 1;
+}
+
+// WRC-only bonus (category.powerStageBonus, data.js) — awarded on top of the normal finishing
+// points, to a ranking derived from the SAME race score with an independent jitter rather than a
+// fully separate stage simulation (see plan notes). No-op (returns []) for any category without
+// a powerStageBonus table, so this is safe to call unconditionally from simulateClassRace.
+export function applyPowerStageBonus(state, category, classId, scored, rng) {
+  if (!category.powerStageBonus) return [];
+  const standings = ensureStandings(state, category.id, classId);
+  const results = [];
+  scored
+    .filter((e) => !e.dnf)
+    .map((e) => ({ e, stageScore: e.score + (rng() - 0.5) * POWER_STAGE_JITTER }))
+    .sort((a, b) => b.stageScore - a.stageScore)
+    .slice(0, category.powerStageBonus.length)
+    .forEach(({ e }, idx) => {
+      const bonus = category.powerStageBonus[idx];
+      for (const driver of e.drivers) {
+        standings.driverPoints[driver.id] = (standings.driverPoints[driver.id] ?? 0) + bonus;
+      }
+      results.push({ driverIds: e.drivers.map((d) => d.id), bonus });
+    });
+  return results;
 }
 
 function topKey(pointsMap) {
@@ -204,6 +235,7 @@ export function rolloverIfNeeded(state, category, rng, classId = null) {
   }
 
   const rankedDrivers = Object.entries(standings.driverPoints).sort((a, b) => b[1] - a[1]);
+  let bestCategoryRepBonus = 0;
   rankedDrivers.forEach(([idStr], index) => {
     const id = Number(idStr);
     const driver = state.drivers.find((d) => d.id === id);
@@ -231,21 +263,50 @@ export function rolloverIfNeeded(state, category, rng, classId = null) {
       podiums,
       championshipPosition: position,
     });
-    const repBonus = seasonReputationBonus(position);
-    if (repBonus > 0) {
-      state.agency.reputation = Math.max(0, state.agency.reputation + Math.round(repBonus * reputationMultiplier(state)));
+    const milestone = checkSeasonTraitMilestone(driver, { wins, podiums, races, position, totalDrivers: rankedDrivers.length }, rng);
+    if (milestone) {
+      entries.push({
+        type: "driver-trait-acquired",
+        driverName: driver.name,
+        driverId: driver.id,
+        traitId: milestone.traitId,
+        replacedTraitId: milestone.replaced,
+        seasonNumber: standings.seasonNumber,
+      });
     }
+    bestCategoryRepBonus = Math.max(bestCategoryRepBonus, seasonReputationBonus(position));
   });
+  // Only the single BEST result across the whole agency counts per season — not summed per
+  // driver (a big roster shouldn't out-earn one great driver) NOR summed per category (running
+  // 3 championships at once shouldn't out-earn running 1 well). rolloverIfNeeded fires once per
+  // category/class whenever THAT series hits its final round, so several calls can land for the
+  // same season at different weeks — seasonRepBonusApplied tracks what's already been credited
+  // for this season index and only tops up the difference when a later category beats it,
+  // instead of re-adding from zero each time. Unscaled (bypasses applyReputationGain's
+  // diminishing curve on purpose): the curve is reserved for the farmable dilemma/shop channel,
+  // while this racing-performance channel is already self-limiting — capped at +10/season, it
+  // takes a genuinely dominant campaign to approach ~80-100 reputation over 10 seasons.
+  const seasonIndex = Math.floor((state.week - 1) / SEASON_WEEKS);
+  state.seasonRepBonusApplied = state.seasonRepBonusApplied ?? {};
+  const alreadyApplied = state.seasonRepBonusApplied[seasonIndex] ?? 0;
+  if (bestCategoryRepBonus > alreadyApplied) {
+    const delta = bestCategoryRepBonus - alreadyApplied;
+    state.seasonRepBonusApplied[seasonIndex] = bestCategoryRepBonus;
+    state.agency.reputation = Math.max(0, state.agency.reputation + Math.round(delta * reputationMultiplier(state)));
+  }
 
   // Team seats now expire at season rollover instead of at agency-contract expiry (which is
   // now a separate, weeks-based concept — see negotiateContract). Each player driver's PRIMARY
   // seat (not a secondary-championship seat) is either renewed — silently, the seat just
   // carries into next season — or the driver is benched, freeing the seat for the next mercato.
+  // Pro seats (driver.isPro, tier >= PRO_TIER_THRESHOLD) are exempt from this roll — a pro
+  // contract is assumed multi-year and simply carries over untouched every season.
   for (const team of classTeams) {
     for (const seat of team.seats) {
       if (seat.driverId == null) continue;
       const occupant = state.drivers.find((d) => d.id === seat.driverId);
       if (!occupant || occupant.teamId !== team.id) continue;
+      if (occupant.isPro) continue;
       const renewChance = clamp((occupant.teamRelationship ?? 60) / 200, 0.1, 0.9);
       if (rng() >= renewChance) benchDriver(state, occupant.id, rng);
     }

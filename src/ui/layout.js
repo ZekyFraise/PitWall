@@ -1,4 +1,6 @@
 import { CATEGORIES, SEASON_WEEKS, weekInSeason, SILLY_SEASON_WEEKS, WINTER_MERCATO_WEEKS, TRACK_STYLES } from "../game/data.js";
+import { POACH_WARNING_THRESHOLD } from "../game/rivals.js";
+import { championshipStanding } from "../game/driverStats.js";
 
 export const NAV = [
   { id: "mes-pilotes", label: "Mes pilotes" },
@@ -72,6 +74,107 @@ function weekPhaseLabel(weekNum) {
   return racing.length ? `Courses cette semaine : ${racing.join(", ")}` : "Semaine calme — aucune course";
 }
 
+// Calendar is fixed per category (category.calendar), so upcoming races are already knowable
+// ahead of time — no need to wait for them to trigger. Looks 4 weeks ahead (current week
+// included), never wraps into next season.
+function upcomingRacesLine(currentWeek) {
+  const parts = [];
+  for (let offset = 0; offset < 4; offset++) {
+    const w = currentWeek + offset;
+    if (w > SEASON_WEEKS) break;
+    const racing = CATEGORIES.filter((c) => c.calendar.includes(w)).map((c) => {
+      const roundIndex = c.calendar.indexOf(w);
+      const styleLabel = TRACK_STYLES[c.roundStyles?.[roundIndex]]?.label;
+      return styleLabel ? `${c.name} (${styleLabel})` : c.name;
+    });
+    if (racing.length) parts.push(`S${w} : ${racing.join(", ")}`);
+  }
+  return parts.join("   •   ") || "Aucune course programmée dans les prochaines semaines.";
+}
+
+// The whole app re-renders (fresh innerHTML) on every action, which would normally restart
+// the CSS scroll animation from zero each time — jarring on every click. Basing the delay on
+// wall-clock time instead of element lifetime means a freshly-recreated track element still
+// picks up the animation at the point it "should" be at right now, so it reads as continuous.
+const TICKER_DURATION_S = 32;
+function tickerAnimationDelay() {
+  const elapsedS = (Date.now() / 1000) % TICKER_DURATION_S;
+  return -elapsedS;
+}
+
+// A one-off substitute race offer (tickSubstituteOffers, team.js) is unprompted and time-boxed
+// to a single upcoming round — worth calling out in the banner since it's easy to miss and
+// expires if ignored, unlike a season-long offer the player explicitly asked for.
+function exceptionalOfferLines(state) {
+  return state.drivers
+    .filter((d) => d.pendingSubstituteOffer)
+    .map((d) => `🌟 Offre exceptionnelle pour ${d.name} — ${d.pendingSubstituteOffer.teamName} (${d.pendingSubstituteOffer.categoryName})`);
+}
+
+// A handful of at-a-glance highlights pulled from state that don't already have a persistent
+// banner of their own (poachRiskLine already covers relation risk) — kept short, one line per
+// condition, only shown when actually relevant.
+function usefulInfoLines(state) {
+  const lines = [];
+
+  if (state.newTalentsThisWeek > 0) {
+    const n = state.newTalentsThisWeek;
+    lines.push(`🔍 ${n} nouveau${n > 1 ? "x" : ""} talent${n > 1 ? "s" : ""} repéré${n > 1 ? "s" : ""} cette semaine`);
+  }
+
+  const injured = state.drivers.filter((d) => (d.injuryWeeksRemaining ?? 0) > 0);
+  if (injured.length > 0) lines.push(`🤕 Blessé(s) : ${injured.map((d) => d.name).join(", ")}`);
+
+  const leaders = state.drivers.filter((d) => d.categoryId && championshipStanding(state, d).position === 1);
+  if (leaders.length > 0) lines.push(`🏆 En tête du championnat : ${leaders.map((d) => d.name).join(", ")}`);
+
+  const expiringSoon = state.drivers.filter((d) => d.contract && d.contract.weeksRemaining <= 3);
+  if (expiringSoon.length > 0) lines.push(`📝 Fin de contrat proche : ${expiringSoon.map((d) => d.name).join(", ")}`);
+
+  if (state.agency.loan) {
+    lines.push(
+      `🏦 Prêt en cours : ${state.agency.loan.totalOwed.toLocaleString("fr-FR")}€ restants (${state.agency.loan.weeklyPayment.toLocaleString("fr-FR")}€/sem)`
+    );
+  }
+
+  return lines;
+}
+
+// Purely cosmetic flavor text — one line, picked deterministically from the seed+week so it
+// doesn't change on every click, just settles into a new one each week like the rest of the
+// banner. No gameplay effect whatsoever.
+const EASTER_EGGS = [
+  "🏁 Le drapeau à damier ne ment jamais... sauf quand il est en retard.",
+  "🔧 Un ingénieur a juré que le moteur tiendrait. On le croit sur parole.",
+  "🐢 Quelque part, une écurie de fin de grille rêve encore de podium.",
+  "☕ Au stand, les paris amicaux sur qui cassera en premier vont bon train.",
+  "📻 « Box, box, box » reste la phrase la plus stressante du paddock.",
+  "🍀 Un trèfle à quatre feuilles a été aperçu près du garage n°13.",
+  "🛞 Les pneus froids détestent les fausses promesses de température.",
+  "📈 Quelque part, un comptable d'écurie recompte le budget carburant.",
+  "🌙 Certains jurent avoir vu la Safety Car sourire cette nuit-là.",
+  "🎙️ Le commentateur a encore prononcé un nom de pilote de travers.",
+];
+
+function easterEggLine(state) {
+  const index = Math.abs((state.seed ^ state.week) % EASTER_EGGS.length);
+  return EASTER_EGGS[index];
+}
+
+function tickerLine(state, currentWeek) {
+  const segments = [upcomingRacesLine(currentWeek), ...exceptionalOfferLines(state), ...usefulInfoLines(state), easterEggLine(state)];
+  return segments.join("   •   ");
+}
+
+// Persistent warning — the poach-dilemma event only fires once, then goes on cooldown, so
+// without this the player has no visible signal that a driver is still at risk in between.
+// Same threshold the dilemma itself uses (rivals.js), no new game logic.
+function poachRiskLine(state) {
+  const atRisk = state.drivers.filter((d) => (d.agencyRelationship ?? 0) < POACH_WARNING_THRESHOLD);
+  if (atRisk.length === 0) return "";
+  return `<div class="poach-risk-banner">⚠️ Risque de débauchage : ${atRisk.map((d) => d.name).join(", ")}</div>`;
+}
+
 function renderTopbar(state) {
   const year = Math.ceil(state.week / SEASON_WEEKS);
   const currentWeek = weekInSeason(state.week);
@@ -84,11 +187,13 @@ function renderTopbar(state) {
       <div class="topbar-stats">
         <div><span class="muted">Trésorerie</span><br/><b class="${state.agency.money < 0 ? "warn" : ""}">${state.agency.money.toLocaleString("fr-FR")}€</b></div>
         <div><span class="muted">Semaine</span><br/><b>${currentWeek}/${SEASON_WEEKS} · An ${year}</b></div>
-        <div><span class="muted">Réputation</span><br/><b>${state.agency.reputation}</b></div>
+        <div><span class="muted">Réputation</span><br/><b>${Math.round(state.agency.reputation)}</b></div>
       </div>
       <button data-action="simulate" class="btn-green">Continuer →</button>
     </div>
-    <div class="topbar-phase muted">${weekPhaseLabel(currentWeek)}</div>`;
+    <div class="topbar-phase muted">${weekPhaseLabel(currentWeek)}</div>
+    <div class="upcoming-ticker"><div class="upcoming-ticker-track" style="animation-delay: ${tickerAnimationDelay()}s">${tickerLine(state, currentWeek)}</div></div>
+    ${poachRiskLine(state)}`;
 }
 
 function renderSidebar(state) {

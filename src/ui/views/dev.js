@@ -54,7 +54,7 @@ export function renderDev(state) {
 
     <h3>Réputation</h3>
     <div class="card">
-      <div class="muted">Réputation actuelle : <b>${state.agency.reputation}</b></div>
+      <div class="muted">Réputation actuelle : <b>${Math.round(state.agency.reputation)}</b></div>
       <div class="card-actions">
         <button data-action="dev-add-reputation" data-id="10" class="small">+10</button>
         <button data-action="dev-add-reputation" data-id="50" class="small">+50</button>

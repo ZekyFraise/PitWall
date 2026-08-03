@@ -1,4 +1,4 @@
-import { CATEGORIES, RIVAL_AGENCIES, SEASON_WEEKS, weekInSeason, PRO_COMMISSION_RATE } from "./data.js";
+import { CATEGORIES, RIVAL_AGENCIES, AGENCY_SPECIALTIES, SEASON_WEEKS, weekInSeason, isMercatoWindow } from "./data.js";
 import { generateDriver } from "./driver.js";
 import { generateAllTeams, benchDriver } from "./team.js";
 import { driverMarketValue } from "./driverStats.js";
@@ -6,25 +6,26 @@ import {
   refillStaffPool,
   seedWorldStaff,
   averageScoutSkill,
-  averageDiscoverySkill,
   averagePrecisionSkill,
-  scoutPoolCapacity,
   negotiationDiscount,
   scoutCost,
   deepScoutCost,
 } from "./staff.js";
-import { rosterCapacity } from "./infrastructure.js";
+import { rosterCapacity, officeCommissionRate, scoutPoolCapacity, effectiveScoutSkills, getFacilityLevelData } from "./infrastructure.js";
 import { recordTransaction } from "./finance.js";
 import { mulberry32 } from "./rng.js";
-import { generateScoutReveal, shuffledRevealKeys, randomWidth, SCOUT_REVEAL_KEYS } from "./scoutReveal.js";
+import { generateScoutReveal, generateStaffScoutReveal, shuffledRevealKeys, randomWidth, SCOUT_REVEAL_KEYS } from "./scoutReveal.js";
+import { refillSponsorPool } from "./sponsors.js";
 
 const SAVE_PREFIX = "pit-wall-save-";
 const LAST_SLOT_KEY = "pit-wall-last-slot";
 const DEEP_SCOUT_COOLDOWN_WEEKS = 2;
 const SIGN_BASE_COST = 3000;
-export const SCHEMA_VERSION = 23;
+const SCOUT_SEARCH_WEEKS = 3;
+let nextSearchId = 1;
+export const SCHEMA_VERSION = 28;
 
-export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#ff3b30", seed = Date.now() | 0) {
+export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#ff3b30", seed = Date.now() | 0, specialtyId = null) {
   const rng = mulberry32(seed);
   const { teams, aiDrivers } = generateAllTeams(rng);
   const state = {
@@ -33,7 +34,7 @@ export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#
     saveName: null,
     seed,
     week: 1,
-    agency: { name: agencyName, money: 50000, reputation: 0, color, loan: null },
+    agency: { name: agencyName, money: 50000, reputation: 0, color, loan: null, specialtyId: specialtyId ?? null },
     drivers: [],
     aiDrivers,
     teams,
@@ -42,20 +43,31 @@ export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#
     staff: [],
     staffPool: [],
     scoutPool: [],
+    sponsorPool: [],
+    activeSponsor: null,
     investments: {},
+    agencyTeamRelationships: {},
+    shopCooldowns: {},
+    seasonRepBonusApplied: {},
+    scoutSearches: [],
+    newTalentsThisWeek: 0,
     log: [],
     championsHistory: [],
     transactions: [],
     financeHistory: [],
-    infrastructure: { offices: 1, training: 1, prestige: 1 },
+    infrastructure: { offices: 1, training: 1, prestige: 1, recruiterQuality: 1, contactNetwork: 1 },
+    lifestyle: { house: 1, car: 1, education: 1 },
     purchasedUpgrades: [],
     deepScoutCooldownWeeks: 0,
     eventCooldowns: {},
     ui: { activeMenu: "mes-pilotes", mondeExpanded: false, focusedCategoryId: CATEGORIES[0].id, viewingDriverId: null },
   };
+  const specialty = AGENCY_SPECIALTIES.find((s) => s.id === specialtyId);
+  if (specialty?.facilityId) state.infrastructure[specialty.facilityId] = 2;
   seedWorldStaff(state, rng);
   refillStaffPool(state, rng);
   refillScoutPool(state, rng);
+  refillSponsorPool(state, rng);
   return state;
 }
 
@@ -63,11 +75,109 @@ export function makeRng(state) {
   return mulberry32((state.seed + state.week * 7919) | 0);
 }
 
+// Higher "Qualité des recruteurs" + averageScoutSkill (staff primary skill) give a prospect a
+// chance to arrive with its potential already known — independent of (and in addition to) the
+// normal deep-scout path, which is unchanged.
+function rollPotentialAlreadyKnown(rng, recruiterQualityLevel, scoutSkill) {
+  const chance = clamp(0.05 + recruiterQualityLevel * 0.05 + (scoutSkill / 99) * 0.15, 0, 0.5);
+  return rng() < chance;
+}
+
+function pushScoutedProspect(state, rng, discovery, qualityFloor, recruiterQualityLevel, ageRange = {}) {
+  const driver = generateDriver(rng, { scoutSkill: discovery + qualityFloor, ...ageRange });
+  if (rollPotentialAlreadyKnown(rng, recruiterQualityLevel, averageScoutSkill(state))) {
+    driver.scoutReveal = { attributeWidths: {}, potentialKnown: true, priceKnown: false, traitsKnown: false };
+  }
+  state.scoutPool.push(driver);
+  state.newTalentsThisWeek = (state.newTalentsThisWeek ?? 0) + 1;
+}
+
+// Refills only at mercato windows now (isMercatoWindow) — recruiters used to keep finding new
+// prospects every single week, which made the vivier feel bottomless. Capacity/quality now come
+// from the "Qualité des recruteurs" infra instead of raw staff headcount (staff.js) — hired
+// recruiters remain useful as a modifier on discovery/precision (effectiveScoutSkills), just not
+// as the primary driver of how many prospects show up.
 export function refillScoutPool(state, rng) {
+  if (!isMercatoWindow(weekInSeason(state.week))) return;
   const capacity = scoutPoolCapacity(state);
-  const scoutSkill = averageScoutSkill(state);
+  const recruiterQualityLevel = state.infrastructure.recruiterQuality;
+  const { discovery } = effectiveScoutSkills(state);
+  const qualityFloor = getFacilityLevelData(state, "recruiterQuality").qualityFloorBonus;
   while (state.scoutPool.length < capacity) {
-    state.scoutPool.push(generateDriver(rng, { scoutSkill }));
+    // Most finds are raw young talent (generateDriver's own 16-19 default), but recruiters
+    // occasionally turn up an older, already-experienced free agent instead — variety beyond
+    // "every prospect is a teenager with everything still ahead of them".
+    const ageRange = rng() < 0.25 ? { minAge: 20, maxAge: 33 } : {};
+    pushScoutedProspect(state, rng, discovery, qualityFloor, recruiterQualityLevel, ageRange);
+  }
+}
+
+// On-demand search — unlike the passive mercato refill, this can be triggered any week, costs
+// money up front, and takes a few weeks to resolve (state.scoutSearches, resolved in
+// resolveScoutSearches below). Cost scales with the "Qualité des recruteurs" level since the
+// result inherits that level's characteristics (same as the passive path).
+export function scoutSearchCost(state) {
+  return 8000 + state.infrastructure.recruiterQuality * 4000;
+}
+
+export function requestScoutSearch(state, { force = false } = {}) {
+  const cost = force ? 0 : scoutSearchCost(state);
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "scout-search", "Recherche de pilote à la demande", -cost);
+  }
+  state.scoutSearches.push({ id: nextSearchId++, resolvesAtWeek: state.week + SCOUT_SEARCH_WEEKS });
+  return { ok: true };
+}
+
+// Resolves any on-demand searches whose delay has elapsed — exempt from scoutPoolCapacity since
+// it's a paid, targeted action, not the passive top-up. Returns log entries the same way
+// tickScoutPoolPoaching/tickFreeAgentPoaching (rivals.js) do, for runWeekBody to collect.
+export function resolveScoutSearches(state, rng) {
+  const entries = [];
+  const resolved = state.scoutSearches.filter((s) => state.week >= s.resolvesAtWeek);
+  if (resolved.length === 0) return entries;
+  state.scoutSearches = state.scoutSearches.filter((s) => state.week < s.resolvesAtWeek);
+  const recruiterQualityLevel = state.infrastructure.recruiterQuality;
+  const { discovery } = effectiveScoutSkills(state);
+  const qualityFloor = getFacilityLevelData(state, "recruiterQuality").qualityFloorBonus;
+  for (const search of resolved) {
+    const before = state.scoutPool.length;
+    pushScoutedProspect(state, rng, discovery, qualityFloor, recruiterQualityLevel);
+    const driver = state.scoutPool[before];
+    entries.push({ type: "scout-search-result", driverName: driver.name });
+  }
+  return entries;
+}
+
+// Moved from staff.js so it can read effectiveScoutSkills (infrastructure.js) without creating
+// a circular import — infrastructure.js already depends on staff.js for bestSkill/etc.
+export function autoRevealCandidates(state, rng) {
+  let remaining = state.staff.filter((s) => s.role === "recruiter").length;
+  const unscouted = state.scoutPool.filter((d) => !d.scouted);
+  const { discovery, precision } = effectiveScoutSkills(state);
+  while (remaining > 0 && unscouted.length > 0) {
+    const idx = Math.floor(rng() * unscouted.length);
+    const driver = unscouted[idx];
+    driver.scouted = true;
+    driver.scoutReveal = generateScoutReveal(rng, discovery, precision);
+    unscouted.splice(idx, 1);
+    remaining -= 1;
+  }
+
+  // Additive, not substitutive — recruiters keep revealing exactly one driver each as above, and
+  // separately have a per-head chance to also reveal a staff candidate this week, so passive
+  // driver discovery never regresses now that staff shares the same recruiters.
+  const recruiterCount = state.staff.filter((s) => s.role === "recruiter").length;
+  const unscoutedStaff = state.staffPool.filter((s) => !s.scouted);
+  for (let i = 0; i < recruiterCount && unscoutedStaff.length > 0; i++) {
+    if (rng() >= 0.3) continue;
+    const idx = Math.floor(rng() * unscoutedStaff.length);
+    const member = unscoutedStaff[idx];
+    member.scouted = true;
+    member.scoutReveal = generateStaffScoutReveal(rng, discovery, precision);
+    unscoutedStaff.splice(idx, 1);
   }
 }
 
@@ -93,18 +203,37 @@ export function scoutDriver(state, driverId, { force = false } = {}) {
   driver.scouted = true;
 
   const rng = makeRng(state);
-  const discoverySkill = averageDiscoverySkill(state);
-  const precisionSkill = averagePrecisionSkill(state);
-  driver.scoutReveal = generateScoutReveal(rng, discoverySkill, precisionSkill);
+  const { discovery, precision } = effectiveScoutSkills(state);
+  driver.scoutReveal = generateScoutReveal(rng, discovery, precision);
   return true;
 }
 
-// Deep scout requires a prior basic scout — it sharpens the windows already uncovered
-// (narrower per-characteristic width, never wider) and digs out further individual traits
-// beyond what the basic pass found, rather than instantly revealing everything at once. Both
-// the narrowing and the extra discovery scale with recruiter force, at a cost that scales too.
-export function deepScoutDriver(state, driverId, { force = false } = {}) {
-  const driver = state.scoutPool.find((d) => d.id === driverId);
+// Same reveal mechanic as scoutDriver, but for an AI/rival driver encountered via their
+// read-only fiche (Monde ▸ Pilotes / Classement) rather than the scout pool — a driver never
+// signed by the player's agency stays masked (attributes/super stats/traits) until scouted here.
+export function scoutRivalDriver(state, driverId, { force = false } = {}) {
+  const driver = state.aiDrivers[driverId];
+  if (!driver) return { ok: false, error: "Pilote introuvable." };
+  if (driver.scouted) return { ok: false, error: "Ce pilote est déjà scouté." };
+  const cost = force ? 0 : scoutCost(state);
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "scout", `Scouting — ${driver.name}`, -cost);
+  }
+  driver.scouted = true;
+
+  const rng = makeRng(state);
+  const { discovery, precision } = effectiveScoutSkills(state);
+  driver.scoutReveal = generateScoutReveal(rng, discovery, precision);
+  return { ok: true };
+}
+
+// Same deep-scout mechanic as deepScoutDriver below, but for an AI/rival driver (state.aiDrivers)
+// reached from their read-only fiche or the Championnats standings — mirrors how scoutRivalDriver
+// mirrors scoutDriver for the basic pass.
+export function deepScoutRivalDriver(state, driverId, { force = false } = {}) {
+  const driver = state.aiDrivers[driverId];
   if (!driver) return { ok: false, error: "Pilote introuvable." };
   if (!driver.scouted) return { ok: false, error: "Il faut d'abord scouter ce pilote." };
   const cost = force ? 0 : deepScoutCost(state);
@@ -116,8 +245,7 @@ export function deepScoutDriver(state, driverId, { force = false } = {}) {
   }
 
   const rng = makeRng(state);
-  const discoverySkill = averageDiscoverySkill(state);
-  const precisionSkill = averagePrecisionSkill(state);
+  const { discovery: discoverySkill, precision: precisionSkill } = effectiveScoutSkills(state);
   const attributeWidths = { ...(driver.scoutReveal?.attributeWidths ?? {}) };
   const maxDeepWidth = clamp(20 - (precisionSkill / 99) * 18, 2, 20);
   const refineChance = clamp(REFINE_CHANCE_MIN + (precisionSkill / 99) * REFINE_CHANCE_BONUS, REFINE_CHANCE_MIN, REFINE_CHANCE_MIN + REFINE_CHANCE_BONUS);
@@ -145,6 +273,105 @@ export function deepScoutDriver(state, driverId, { force = false } = {}) {
   return { ok: true };
 }
 
+// Deep scout requires a prior basic scout — it sharpens the windows already uncovered
+// (narrower per-characteristic width, never wider) and digs out further individual traits
+// beyond what the basic pass found, rather than instantly revealing everything at once. Both
+// the narrowing and the extra discovery scale with recruiter force, at a cost that scales too.
+export function deepScoutDriver(state, driverId, { force = false } = {}) {
+  const driver = state.scoutPool.find((d) => d.id === driverId);
+  if (!driver) return { ok: false, error: "Pilote introuvable." };
+  if (!driver.scouted) return { ok: false, error: "Il faut d'abord scouter ce pilote." };
+  const cost = force ? 0 : deepScoutCost(state);
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "scout", `Scouting approfondi — ${driver.name}`, -cost);
+  }
+
+  const rng = makeRng(state);
+  const { discovery: discoverySkill, precision: precisionSkill } = effectiveScoutSkills(state);
+  const attributeWidths = { ...(driver.scoutReveal?.attributeWidths ?? {}) };
+  const maxDeepWidth = clamp(20 - (precisionSkill / 99) * 18, 2, 20);
+  const refineChance = clamp(REFINE_CHANCE_MIN + (precisionSkill / 99) * REFINE_CHANCE_BONUS, REFINE_CHANCE_MIN, REFINE_CHANCE_MIN + REFINE_CHANCE_BONUS);
+  for (const key of Object.keys(attributeWidths)) {
+    if (rng() < refineChance) {
+      attributeWidths[key] = Math.min(attributeWidths[key], randomWidth(rng, 2, maxDeepWidth));
+    }
+  }
+
+  const computedTarget = Math.round(
+    clamp(DEEP_SCOUT_MIN_TOTAL + (discoverySkill / 99) * DEEP_SCOUT_FORCE_BONUS, DEEP_SCOUT_MIN_TOTAL, SCOUT_REVEAL_KEYS.length)
+  );
+  const revealedCount = Object.keys(attributeWidths).length;
+  const targetCount = Math.min(SCOUT_REVEAL_KEYS.length, Math.max(revealedCount + DEEP_SCOUT_MIN_ADDED, computedTarget));
+  const missing = shuffledRevealKeys(rng).filter((key) => !(key in attributeWidths));
+  missing.slice(0, targetCount - revealedCount).forEach((key) => (attributeWidths[key] = randomWidth(rng, 2, maxDeepWidth)));
+
+  driver.scoutReveal = {
+    attributeWidths,
+    potentialKnown: true,
+    priceKnown: true,
+    traitsKnown: true,
+  };
+  state.deepScoutCooldownWeeks = DEEP_SCOUT_COOLDOWN_WEEKS;
+  return { ok: true };
+}
+
+// Staff scouting mirrors scoutDriver/deepScoutDriver above, cheaper since the reveal surface is
+// far smaller (4 skills, always all revealed at once — see generateStaffScoutReveal).
+export function staffScoutCost(state) {
+  return Math.round(300 + averageScoutSkill(state) * 4);
+}
+
+export function staffDeepScoutCost(state) {
+  return Math.round(1200 + averageScoutSkill(state) * 8);
+}
+
+export function scoutStaff(state, staffId, { force = false } = {}) {
+  const member = state.staffPool.find((s) => s.id === staffId);
+  if (!member) return { ok: false, error: "Membre du staff introuvable." };
+  if (member.scouted) return { ok: false, error: "Ce membre du staff est déjà scouté." };
+  const cost = force ? 0 : staffScoutCost(state);
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "scout", `Scouting — ${member.name}`, -cost);
+  }
+  member.scouted = true;
+
+  const rng = makeRng(state);
+  const { discovery, precision } = effectiveScoutSkills(state);
+  member.scoutReveal = generateStaffScoutReveal(rng, discovery, precision);
+  return { ok: true };
+}
+
+// Same shared recruiter-attention cooldown as deepScoutDriver (state.deepScoutCooldownWeeks) —
+// recruiters already do double duty on drivers and staff, so deep-scouting either one distracts
+// them from passively revealing anything for the same 2 weeks.
+export function deepScoutStaff(state, staffId, { force = false } = {}) {
+  const member = state.staffPool.find((s) => s.id === staffId);
+  if (!member) return { ok: false, error: "Membre du staff introuvable." };
+  if (!member.scouted) return { ok: false, error: "Il faut d'abord scouter ce membre du staff." };
+  const cost = force ? 0 : staffDeepScoutCost(state);
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "scout", `Scouting approfondi — ${member.name}`, -cost);
+  }
+
+  const rng = makeRng(state);
+  const { precision: precisionSkill } = effectiveScoutSkills(state);
+  const maxDeepWidth = clamp(20 - (precisionSkill / 99) * 18, 2, 20);
+  const attributeWidths = { ...(member.scoutReveal?.attributeWidths ?? {}) };
+  for (const key of Object.keys(attributeWidths)) {
+    attributeWidths[key] = Math.min(attributeWidths[key], randomWidth(rng, 2, maxDeepWidth));
+  }
+  member.scoutReveal = { attributeWidths, traitsKnown: true };
+  state.deepScoutCooldownWeeks = DEEP_SCOUT_COOLDOWN_WEEKS;
+  return { ok: true };
+}
+
 export function signCost(state, driver) {
   const base = SIGN_BASE_COST + driver.potential * 400 + (driver.scouted ? 0 : 1500);
   return Math.round(base * (1 - negotiationDiscount(state)));
@@ -154,7 +381,7 @@ export function signCost(state, driver) {
 // shown as a range until scouted more precisely. Width narrows with recruiter precision.
 export function signCostRange(state, driver) {
   const cost = signCost(state, driver);
-  const precisionSkill = averagePrecisionSkill(state);
+  const { precision: precisionSkill } = effectiveScoutSkills(state);
   const width = Math.max(0.08, Math.min(0.4, 0.4 - (precisionSkill / 99) * 0.32));
   const low = Math.max(0, Math.round((cost * (1 - width / 2)) / 100) * 100);
   const high = Math.round((cost * (1 + width / 2)) / 100) * 100;
@@ -181,7 +408,7 @@ export function signDriver(state, driverId, { force = false } = {}) {
   // (assignSeat), so the UI doesn't claim they're competing somewhere before they've ever
   // raced; listJoinableTeams/nextCategories already treat a null categoryId as "start from
   // tier 0" for matchmaking purposes.
-  driver.contract = { weeksRemaining: SEASON_WEEKS, weeklyWage: Math.round(cost / 40), commissionRate: PRO_COMMISSION_RATE };
+  driver.contract = { weeksRemaining: SEASON_WEEKS, weeklyWage: Math.round(cost / 40), commissionRate: officeCommissionRate(state) };
   driver.categoryId = null;
   driver.teamId = null;
   driver.weeksWithoutContract = 0;
@@ -229,7 +456,7 @@ export function contractBaseline(state, driver) {
   const base = 2000 + driver.potential * 150;
   const weeklyWage = Math.round((base / 20) * (1 - negotiationDiscount(state)));
   const transferFee = Math.round(base * (1 - negotiationDiscount(state)));
-  const commissionRate = clamp(PRO_COMMISSION_RATE * (1 + negotiationDiscount(state) * 0.3), 0.05, 0.6);
+  const commissionRate = clamp(officeCommissionRate(state) * (1 + negotiationDiscount(state) * 0.3), 0.05, 0.6);
   return {
     weeklyWage,
     transferFee,
@@ -243,6 +470,23 @@ export function contractBaseline(state, driver) {
       max: Math.round(commissionRate * (1 + NEGOTIATION_TOLERANCE) * 100) / 100,
     },
   };
+}
+
+// A driver in poor relationship or worn down on patience holds out for tougher terms than the
+// neutral baseline; one who still trusts the agency and hasn't been ground down settles for
+// terms close to (or even under) that baseline. Reuses contractBaseline rather than a second
+// cost formula.
+function counterOfferDemandFactor(driver) {
+  const relationshipTerm = (50 - (driver.agencyRelationship ?? 100)) / 150;
+  const patienceTerm = (100 - (driver.negotiationPatience ?? 100)) / 200;
+  return clamp(1 + relationshipTerm + patienceTerm, 0.7, 1.6);
+}
+
+function buildCounterOffer(driver, baseline) {
+  const demand = counterOfferDemandFactor(driver);
+  return driver.isPro
+    ? { commissionRate: Math.round(clamp(baseline.commissionRate / demand, 0.01, 0.9) * 1000) / 1000 }
+    : { weeklyWage: Math.round(baseline.weeklyWage / demand), transferFee: Math.round(baseline.transferFee * demand) };
 }
 
 // Agence contract: salaire/frais (amateur) OU commission négociée (pro), durée en SEMAINES
@@ -287,6 +531,7 @@ export function negotiateContract(state, driverId, { weeklyWage, transferFee, co
     const distance = Math.abs(generosity - 1);
     driver.negotiationPatience = clamp((driver.negotiationPatience ?? 100) - Math.round(10 + distance * 40), 0, 100);
     driver.agencyRelationship = clamp(driver.agencyRelationship - 5, 0, 200);
+    driver.negotiationCounterOffer = buildCounterOffer(driver, baseline);
     return { ok: false, error: `${driver.name} juge cette offre insuffisante — revois tes conditions.` };
   }
 
@@ -307,6 +552,7 @@ export function negotiateContract(state, driverId, { weeklyWage, transferFee, co
   }
   driver.weeksWithoutContract = 0;
   driver.negotiationPatience = 100;
+  driver.negotiationCounterOffer = null;
   driver.agencyRelationship = clamp(driver.agencyRelationship + Math.round((generosity - 1) * 10), 0, 200);
   return { ok: true };
 }
@@ -341,9 +587,16 @@ export function setInvestment(state, driverId, amount) {
 export const LOAN_ELIGIBLE_THRESHOLD = 10000;
 export const LOAN_MAX_AMOUNT = 30000;
 const LOAN_INTEREST_RATE = 0.25;
-const LOAN_WEEKS = 15;
+// Durations offered to the player, in months — converted to weeks (the unit the simulation
+// actually runs on) via the average month length (52/12), not a flat 4-week approximation.
+export const LOAN_DURATION_MONTHS_OPTIONS = [6, 12, 18, 24, 30, 36];
+const LOAN_DEFAULT_MONTHS = 12;
 
-export function takeLoan(state, amount, { force = false } = {}) {
+export function loanWeeksForMonths(months) {
+  return Math.max(1, Math.round(months * (52 / 12)));
+}
+
+export function takeLoan(state, amount, months, { force = false } = {}) {
   if (state.agency.loan) {
     return { ok: false, error: "Un prêt est déjà en cours — rembourse-le avant d'en contracter un autre." };
   }
@@ -355,9 +608,13 @@ export function takeLoan(state, amount, { force = false } = {}) {
   }
   amount = Math.round(clamp(amount, 0, LOAN_MAX_AMOUNT));
   if (amount <= 0) return { ok: false, error: "Montant invalide." };
+  if (!force && !LOAN_DURATION_MONTHS_OPTIONS.includes(months)) {
+    return { ok: false, error: "Durée de remboursement invalide." };
+  }
+  const weeks = loanWeeksForMonths(LOAN_DURATION_MONTHS_OPTIONS.includes(months) ? months : LOAN_DEFAULT_MONTHS);
 
   const totalOwed = Math.round(amount * (1 + LOAN_INTEREST_RATE));
-  state.agency.loan = { totalOwed, weeklyPayment: Math.ceil(totalOwed / LOAN_WEEKS) };
+  state.agency.loan = { totalOwed, weeklyPayment: Math.ceil(totalOwed / weeks) };
   state.agency.money += amount;
   recordTransaction(state, "loan", "Prêt contracté", amount);
   return { ok: true };

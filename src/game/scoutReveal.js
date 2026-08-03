@@ -40,3 +40,17 @@ export function generateScoutReveal(rng, discoverySkill, precisionSkill) {
     .forEach((key) => (attributeWidths[key] = randomWidth(rng, 4, maxWidth)));
   return { attributeWidths, potentialKnown: false, priceKnown: false, traitsKnown: false };
 }
+
+// Staff only has 4 numeric skills (vs. a driver's ~30 attributes), so a scouting pass always
+// reveals all of them at once — there's no meaningful "subset" to hide, only how wide each
+// window is.
+export function generateStaffScoutReveal(rng, discoverySkill, precisionSkill) {
+  const maxWidth = clamp(40 - (precisionSkill / 99) * 36, 4, 40);
+  const attributeWidths = {
+    primary: randomWidth(rng, 4, maxWidth),
+    secondary: randomWidth(rng, 4, maxWidth),
+    communication: randomWidth(rng, 4, maxWidth),
+    experience: randomWidth(rng, 4, maxWidth),
+  };
+  return { attributeWidths, traitsKnown: false };
+}

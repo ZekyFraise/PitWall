@@ -1,7 +1,7 @@
 import { randomName } from "./data.js";
 import { recordTransaction } from "./finance.js";
-import { generateScoutReveal } from "./scoutReveal.js";
 import { assignStaffTraits, staffTraitSkillBonus } from "./traits.js";
+import { generateStaffScoutReveal } from "./scoutReveal.js";
 
 let nextStaffId = 1;
 
@@ -10,7 +10,6 @@ function clamp(v, min, max) {
 }
 
 const STAFF_POOL_SIZE = 8;
-const MAX_SCOUT_POOL = 10;
 // Scaled to match the volume/logic used for AI driver generation (hundreds of seats
 // filled across all categories at world init), not a small flat handful of staff.
 const WORLD_STAFF_POOL_SIZE = 600;
@@ -63,8 +62,13 @@ export const ROLES = {
 
 const ROLE_IDS = Object.keys(ROLES);
 
-export function generateStaffMember(rng, role) {
-  const roll = () => Math.round(clamp(30 + rng() * 65, 30, 95));
+// Elite profiles (surfaced via the "Réseau de contacts" infrastructure, see infrastructure.js
+// eliteStaffChance) roll from a much higher floor — a network connection means you only ever
+// hear about the good ones.
+const ELITE_SKILL_FLOOR = 65;
+
+export function generateStaffMember(rng, role, { elite = false } = {}) {
+  const roll = () => Math.round(elite ? clamp(ELITE_SKILL_FLOOR + rng() * 34, ELITE_SKILL_FLOOR, 99) : clamp(30 + rng() * 65, 30, 95));
   const primary = roll();
   const secondary = roll();
   const communication = roll();
@@ -73,17 +77,52 @@ export function generateStaffMember(rng, role) {
     id: nextStaffId++,
     name: randomName(rng),
     role,
+    // A recruiter's specialty is the staff role they're best at sourcing — feeds
+    // pickWeightedRole below. Non-recruiters have no use for it.
+    specialty: role === "recruiter" ? ROLE_IDS[Math.floor(rng() * ROLE_IDS.length)] : null,
+    elite,
     skills: { primary, secondary, communication, experience },
     hireCost: Math.round(2000 + primary * 150),
     weeklyWage: Math.round(150 + primary * 6),
     traits: assignStaffTraits(rng),
+    // Fog of war, mirroring the driver scoutPool convention (scoutReveal.js) — a fresh candidate
+    // shows nothing until scouted. Elite candidates are the one exception (see refillStaffPool).
+    scouted: false,
+    scoutReveal: null,
   };
 }
 
-export function refillStaffPool(state, rng) {
+// Recruiters biased toward a role via their specialty make that role show up more often in the
+// pool — mirrors how scoutSkill already biases driver generation, applied categorically instead
+// of numerically since a specialty is "which role", not "how good".
+export function pickWeightedRole(rng, state) {
+  const weights = ROLE_IDS.map((id) => {
+    const bonus = state.staff.filter((s) => s.role === "recruiter" && s.specialty === id).length * 2;
+    return 1 + bonus;
+  });
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  let roll = rng() * total;
+  for (let i = 0; i < ROLE_IDS.length; i++) {
+    roll -= weights[i];
+    if (roll < 0) return ROLE_IDS[i];
+  }
+  return ROLE_IDS[ROLE_IDS.length - 1];
+}
+
+export function refillStaffPool(state, rng, eliteChance = 0) {
   while (state.staffPool.length < STAFF_POOL_SIZE) {
-    const role = ROLE_IDS[Math.floor(rng() * ROLE_IDS.length)];
-    state.staffPool.push(generateStaffMember(rng, role));
+    state.staffPool.push(generateStaffMember(rng, pickWeightedRole(rng, state)));
+  }
+  const hasElite = state.staffPool.some((s) => s.elite);
+  if (!hasElite && rng() < eliteChance) {
+    const idx = Math.floor(rng() * state.staffPool.length);
+    const elite = generateStaffMember(rng, pickWeightedRole(rng, state), { elite: true });
+    // The network already vouches for them — pre-scouted, using your recruiters' raw skill
+    // (not the infra-boosted effectiveScoutSkills, to avoid staff.js importing infrastructure.js
+    // and creating a circular dependency — infrastructure.js already imports FROM staff.js).
+    elite.scouted = true;
+    elite.scoutReveal = generateStaffScoutReveal(rng, averageScoutSkill(state), averagePrecisionSkill(state));
+    state.staffPool[idx] = elite;
   }
 }
 
@@ -101,6 +140,9 @@ export function seedWorldStaff(state, rng) {
   }
   for (let i = 0; i < rivalCount; i++) {
     const agency = state.rivalAgencies[i % state.rivalAgencies.length];
+    // Flavor-only roster, never recruitable — no point gating it behind a scouting action that
+    // doesn't exist for rival-owned staff, so it's shown fully like it always has been.
+    pool[i].scouted = true;
     agency?.staff.push(pool[i]);
   }
   state.staffPool.push(...pool.slice(rivalCount));
@@ -138,16 +180,10 @@ export function averageScoutSkill(state) {
   return pool.reduce((sum, r) => sum + r.skills.primary, 0) / pool.length;
 }
 
-export const averageDiscoverySkill = averageScoutSkill;
-
 export function averagePrecisionSkill(state) {
   const pool = recruiters(state);
   if (pool.length === 0) return 0;
   return pool.reduce((sum, r) => sum + r.skills.secondary, 0) / pool.length;
-}
-
-export function scoutPoolCapacity(state) {
-  return Math.min(4 + recruiters(state).length, MAX_SCOUT_POOL);
 }
 
 // Both scale with recruiter force (perspicacité) — a stronger scouting team costs more
@@ -158,21 +194,6 @@ export function scoutCost(state) {
 
 export function deepScoutCost(state) {
   return Math.round(2000 + averageScoutSkill(state) * 12);
-}
-
-export function autoRevealCandidates(state, rng) {
-  let remaining = recruiters(state).length;
-  const unscouted = state.scoutPool.filter((d) => !d.scouted);
-  const discoverySkill = averageDiscoverySkill(state);
-  const precisionSkill = averagePrecisionSkill(state);
-  while (remaining > 0 && unscouted.length > 0) {
-    const idx = Math.floor(rng() * unscouted.length);
-    const driver = unscouted[idx];
-    driver.scouted = true;
-    driver.scoutReveal = generateScoutReveal(rng, discoverySkill, precisionSkill);
-    unscouted.splice(idx, 1);
-    remaining -= 1;
-  }
 }
 
 export function bestSkill(state, role) {

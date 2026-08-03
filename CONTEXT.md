@@ -5,8 +5,12 @@
 > pour l'archi/conventions stables, et `TODO.md` pour le backlog issu du journal de
 > conception de l'utilisateur (`Choses à modifier.docx`) — ce contenu-là ne vit pas ici.
 
-**`SCHEMA_VERSION` actuel : 22.** Toute sauvegarde antérieure est rejetée proprement (pas
-de migration — politique assumée).
+**`SCHEMA_VERSION` actuel : 28.** Toute sauvegarde antérieure est rejetée proprement (pas
+de migration — politique assumée). Principales étapes depuis 22 : 24→25 (refonte
+Investissement/recrutement staff), 26 (Vie personnelle), 27→28 (marché des transferts,
+sponsoring). Les champs purement additifs (traits acquis, contre-offre, spécialité de fondation,
+etc.) n'ont volontairement PAS bumpé le schéma — seuls les changements de forme significatifs
+de premier niveau le font.
 
 ## Ce qui est implémenté (vue d'ensemble)
 
@@ -56,6 +60,35 @@ de migration — politique assumée).
   schéma obsolète puis retry), `createNewGame` wrappé en try/catch avec toast d'erreur,
   `pickRaceNumber` a un fallback déterministe borné (plus de boucle infinie possible),
   génération de marques avec pool de secours si tableau vide.
+- **Super statistiques** : 5 stats dérivées (Rythme/Régularité/Résistance/Adaptabilité/Instinct,
+  chacune moyenne de 5-6 attributs bruts) sont les vrais inputs d'`overallRating`/`reliability`
+  et de la simulation de course — les 32 attributs bruts restent la couche génération/scouting.
+- **Traits** : 15 traits pilote + 10 traits staff fixés à la génération (bonus de stat/biais de
+  dilemme), révélés par scouting approfondi. 6 traits pilote sont en plus **acquérables
+  dynamiquement** en fin de saison selon la performance (victoires, régularité, relation
+  agence) — plafond de 2 traits inchangé, seul un trait déjà ACQUIS peut être remplacé (jamais
+  un trait inné). Marqués 🌱 sur la fiche pilote, annoncés dans le log Résultats.
+- **Marché des transferts** : le dilemme "offre de transfert" ouvre une vraie négociation
+  (indemnité proposée par le joueur, acceptée ou non selon son écart à la valeur marché) au lieu
+  d'un accepter/refuser figé. Côté contrat AGENCE, un refus déclenche une contre-offre chiffrée
+  du pilote (selon relation/patience) reprenable en un clic.
+- **Sponsoring** : un contrat sponsor unique à la fois (4 paliers gatés par réputation), revenu
+  hebdomadaire + primes de victoire/podium, résiliable avec perte de réputation scalée par
+  palier. Distinct des dilemmes sponsor ponctuels existants (inchangés).
+- **Vie personnelle de l'agent** (`lifestyle.js`) : 3 catégories (Logement/Véhicule/Formation),
+  pur confort sans effet mécanique sur l'agence sauf +1 réputation à chaque achat.
+- **Spécialité de fondation** : à la création de partie, 5 perks optionnels (+ "aucune") qui
+  portent gratuitement UNE infrastructure à son 2ᵉ palier dès le départ (même bonus, même
+  entretien hebdomadaire que si elle avait été achetée).
+- **Palmarès** : écran dédié listant les champions par saison/catégorie, plus deux distinctions
+  d'ambiance dérivées à l'affichage ("Pilote de l'agence de la saison", "Révélation de l'agence").
+- **Infrastructure/staff (refonte)** : Bureaux, Qualité des recruteurs et Réseau de contacts
+  vont jusqu'à 8 paliers ; le recrutement staff a un fog-of-war (scout/deep-scout) et des
+  profils elite/spécialités, alimentés par `contactNetwork`.
+- **Barèmes de points réalistes** par catégorie/classe (`pointsTableFor`) + bonus Power Stage
+  WRC, au lieu d'un barème F1 unique appliqué partout.
+- **Saut de catégorie conditionnel** : un pilote peut sauter un tier si ses stats le
+  justifient largement (`tierSkipEligible`), signalé par un badge "⚡" dans l'UI.
 
 ## Décision de design (non issue du journal, à retenir)
 
@@ -76,6 +109,25 @@ de migration — politique assumée).
 
 ## Historique récent (sessions condensées, plus anciennes en bas)
 
+0. Session longue, 4 features majeures livrées via le cycle plan→implémente→teste→vérifie
+   navigateur→documente TODO.md, dans l'ordre :
+   - **Marché des transferts en négociation** : le dilemme "offre de transfert" ouvre une
+     négociation (`negotiateTransfer`, team.js) au lieu d'accepter/refuser un montant imposé,
+     + **contre-offre du pilote** pendant la négociation de contrat AGENCE (`buildCounterOffer`,
+     state.js) sur refus, reprenable en un clic sans perdre l'affichage.
+   - **Traits acquis dynamiquement** : 6 des 15 traits pilote marqués `acquirable`, gagnés/
+     remplacés en fin de saison selon la performance (`checkSeasonTraitMilestone`, traits.js),
+     branché dans `rolloverIfNeeded` (standings.js). Cap de 2 traits inchangé, un trait inné
+     n'est jamais évincé.
+   - **Sponsoring + récompenses de presse** : nouveau `sponsors.js` (contrat unique, 4 paliers,
+     revenu hebdo + primes victoire/podium), + nouvelle distinction "Révélation de l'agence"
+     dans le Palmarès existant. `SCHEMA_VERSION` 27→28.
+   - **Spécialité de fondation** : 5 perks (+ "aucune") à la création de partie, chacun porte
+     gratuitement une infrastructure existante à son 2ᵉ palier (`AGENCY_SPECIALTIES`, data.js).
+   Pattern de vérification systématique établi/réutilisé : hook de debug temporaire
+   (`window.__pwState`/`__pwRender` dans `main.js`, retiré avant de conclure), avancement de
+   semaine manuel pour contourner le déterminisme de `makeRng(state)` par semaine, et
+   `makeControlledRng` pour forcer un jet précis sans casser les tirages avals (assignSeat).
 1. 7 features/fixes en une passe : pool de staff mondial ×4 (30→120, même volume/logique
    que la génération de pilotes), Talents cliquable (modale de détail des stats découvertes
    via `showInfoModal`), classement d'équipe avec fallback sur `team.lastSeasonRank` (calculé

@@ -104,6 +104,67 @@ h2 {
   font-size: 0.85rem;
 }
 
+.upcoming-ticker {
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 0.4rem 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.upcoming-ticker-track {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 0.95rem;
+  color: var(--text);
+  /* Duration must match layout.js's TICKER_DURATION_S (tickerAnimationDelay) — otherwise the
+     wall-clock-based delay drifts out of phase with the actual CSS cycle over time. */
+  animation: ticker-scroll 32s linear infinite;
+}
+
+/* Reverted back to right-to-left (the original direction) per explicit request — was briefly
+   left-to-right earlier in the session. */
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(100vw);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+.pos-gold {
+  color: #ffd700;
+  font-weight: 700;
+}
+
+.pos-silver {
+  color: #c0c0c0;
+  font-weight: 700;
+}
+
+.pos-bronze {
+  color: #cd7f32;
+  font-weight: 700;
+}
+
+.pos-points {
+  color: var(--text);
+}
+
+.pos-no-points {
+  color: var(--muted);
+}
+
+.poach-risk-banner {
+  padding: 0.4rem 1.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--accent-2);
+  color: var(--accent-2);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .banner-danger {
   background: rgba(255, 69, 58, 0.15);
   border: 1px solid var(--danger);
@@ -193,6 +254,21 @@ button.small {
   flex-wrap: wrap;
   gap: 0.35rem;
   white-space: nowrap;
+}
+
+/* Fixed width, anchored on the header cell (always present, unlike the row's buttons which
+   change in count/label as a driver moves through scout -> deep-scout -> signed) — keeps the
+   Talents table's whole column layout stable instead of jumping every time a row's action
+   buttons change. */
+.col-talent-action {
+  width: 240px;
+}
+
+/* Same fixed-header-width trick, applied to "Mes pilotes"' leftmost icon strip (blessé, leader
+   du championnat, sans contrat, sans écurie) so 0-4 icons per row never shifts the table. */
+.col-status-icons {
+  width: 70px;
+  text-align: center;
 }
 
 .content {
@@ -285,6 +361,34 @@ th.sortable.active {
 }
 
 .color-swatch.active {
+  border-color: var(--text);
+}
+
+.specialty-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.specialty-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.specialty-option strong {
+  font-size: 0.85rem;
+}
+
+.specialty-option.active {
   border-color: var(--text);
 }
 
@@ -965,6 +1069,10 @@ h3 {
   border-color: var(--good);
 }
 
+.toast-warning {
+  border-color: var(--accent-2);
+}
+
 .save-banner-container {
   position: fixed;
   top: 1rem;
@@ -1024,6 +1132,31 @@ h3 {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 1rem;
+}
+
+.result-modal {
+  max-width: 420px;
+  text-align: center;
+  border-width: 2px;
+  cursor: pointer;
+}
+
+.result-icon {
+  font-size: 2.5rem;
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+
+.result-modal-good {
+  border-color: var(--good);
+}
+
+.result-modal-bad {
+  border-color: var(--danger);
+}
+
+.result-modal-neutral {
+  border-color: var(--border);
 }
 
 .event-modal-actions {
