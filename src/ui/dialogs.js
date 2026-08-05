@@ -89,14 +89,23 @@ function drainResultModalQueue() {
   setTimeout(close, 5000);
 }
 
-// Big centered popup for event outcomes and notable race results — replaces the small corner
-// toast for these, since a win/podium/dilemma resolution deserves more visibility than a
-// discreet corner notification. Queued rather than stacked: only one shown at a time, so a week
-// with several notable results (e.g. two podiums + an event) doesn't pile up overlapping
-// dimmed backgrounds.
+// Big centered popup — reserved for notable RACE results (win/podium/DNF) only. Event/dilemma
+// outcomes used to go through this too, but that was reverted on request: a dilemma resolution
+// now surfaces through the small corner toast instead (showResultToast below), the centered
+// modal felt too intrusive for something that happens most weeks. Queued rather than stacked:
+// only one shown at a time, so multiple podiums the same week don't pile up dimmed backgrounds.
 export function showResultModal(title, text, tone = "neutral", icon = null) {
   resultModalQueue.push({ title, text, tone, icon: icon ?? DEFAULT_RESULT_ICONS[tone] ?? DEFAULT_RESULT_ICONS.neutral });
   if (!resultModalShowing) drainResultModalQueue();
+}
+
+const RESULT_TOAST_TYPE = { good: "success", bad: "error", neutral: "info" };
+
+// Small bottom-right corner popup (reuses the existing toast system) for event/dilemma
+// outcomes — title + text combined on one toast, auto-dismiss like any other toast.
+export function showResultToast(title, text, tone = "neutral", icon = null) {
+  const displayIcon = icon ?? DEFAULT_RESULT_ICONS[tone] ?? DEFAULT_RESULT_ICONS.neutral;
+  showToast(`${displayIcon} ${title} — ${text}`, RESULT_TOAST_TYPE[tone] ?? "info");
 }
 
 export function showEventModal(event, onOptionPicked) {
@@ -130,14 +139,58 @@ export function showEventModal(event, onOptionPicked) {
     btn.addEventListener("click", () => {
       const idx = Number(btn.dataset.idx);
       // Apply consequences and close immediately — no confirmation step. The outcome is
-      // surfaced through the big centered result popup rather than a second choice screen.
+      // surfaced through the small corner toast rather than a second choice screen.
       const result = idx >= 0 ? onOptionPicked(idx) : null;
       overlay.remove();
       if (result && result.text) {
-        showResultModal(result.title ?? event.title, result.text, result.tone ?? "neutral");
+        showResultToast(result.title ?? event.title, result.text, result.tone ?? "neutral");
       }
     });
   });
+}
+
+// Negotiation window that overlays the game (recruitment, per explicit request — "chaque
+// phase de négociation sera dans une fenêtre en superposition") — stays open across a rejected
+// offer instead of closing, showing the refusal message and a suggested counter-offer inline
+// so the player can adjust and resubmit without reopening. onSubmit must return the same
+// {ok, error?, counterOffer?} shape as negotiateSigning (state.js).
+export function showNegotiationModal(title, subtitle, initialOffer, onSubmit) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const box = document.createElement("div");
+  box.className = "modal-box negotiation-modal";
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  function renderContent(offerValue, message) {
+    box.innerHTML = `
+      <h3>${title}</h3>
+      <p>${subtitle}</p>
+      ${message ? `<p class="warn-text">${message}</p>` : ""}
+      <label class="negotiation-offer-label">
+        Offre proposée
+        <input type="number" min="0" step="500" data-role="offer-input" value="${offerValue}" />
+        €
+      </label>
+      <div class="modal-actions">
+        <button class="secondary" data-role="cancel">Annuler</button>
+        <button class="primary" data-role="submit">Proposer</button>
+      </div>`;
+    box.querySelector('[data-role="cancel"]').addEventListener("click", () => overlay.remove());
+    box.querySelector('[data-role="submit"]').addEventListener("click", () => {
+      const value = Number(box.querySelector('[data-role="offer-input"]').value) || 0;
+      const result = onSubmit(value);
+      if (result.ok) {
+        overlay.remove();
+      } else {
+        renderContent(result.counterOffer ?? value, result.error);
+      }
+    });
+  }
+  renderContent(initialOffer, null);
 }
 
 export function showConfirm(message, onConfirm) {

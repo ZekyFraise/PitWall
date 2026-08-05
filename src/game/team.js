@@ -77,9 +77,10 @@ export function usedDriverNumbersInCategory(state, categoryId, excludeDriverId =
   return used;
 }
 
-export function generateAIDriver(rng, team, category, usedNumbers = null) {
+export function generateAIDriver(rng, team, category, usedNumbers = null, { forceBronze = false } = {}) {
   const [minAge, maxAge] = AGE_RANGE_BY_TIER[category.tier] ?? [18, 30];
   const driver = generateDriver(rng, { minAge, maxAge });
+  if (forceBronze) driver.isBronze = true;
   const targetRating = clamp(team.prestige + (rng() * 2 - 1) * 10, 15, 99);
   driver.potential = Math.round(clamp(targetRating + rng() * 15, targetRating, 99));
   // Same rollGrowthCeiling distribution as generateDriver's own roll (driver.js) — recomputed
@@ -104,8 +105,8 @@ export function generateAIDriver(rng, team, category, usedNumbers = null) {
   return driver;
 }
 
-const STRICT_UNIQUE_BRAND_CATEGORIES = new Set(["f1", "rally"]);
-const MIN_OCCURRENCE_BRAND_CATEGORIES = new Set(["karting"]);
+const STRICT_UNIQUE_BRAND_CATEGORIES = new Set(["f1", "rally", "wrc2"]);
+const MIN_OCCURRENCE_BRAND_CATEGORIES = new Set(["karting", "kartingKz1", "kartingKz2"]);
 
 function shuffleArray(arr, rng) {
   const copy = [...arr];
@@ -153,6 +154,13 @@ function buildWecClassSpecs(cls, category, rng) {
     classId: cls.id,
     brand: i < shuffled.length ? shuffled[i] : brands[Math.floor(rng() * brands.length)],
   }));
+}
+
+// PRO/AM-style classes (LMP3 PRO/AM, LMP2 PRO/AM, GT3 in MLMC/ELMS) require at least one
+// bronze-rated driver sharing each car — see data.js's requiresBronze per class.
+function classRequiresBronze(category, subClassId) {
+  if (!subClassId || !category.classes) return false;
+  return category.classes.find((c) => c.id === subClassId)?.requiresBronze === true;
 }
 
 function teamSizesFor(category, rng) {
@@ -208,11 +216,16 @@ export function generateAllTeams(rng) {
           team.carNumbers[carIndex] = pickRaceNumber([], usedCarNumbers, rng);
         }
       }
-      for (const seat of team.seats) {
-        const aiDriver = generateAIDriver(rng, team, category, usedNumbers);
+      const bronzeRequired = classRequiresBronze(category, team.subClass);
+      const carHasBronze = {};
+      team.seats.forEach((seat, i) => {
+        const isLastSeatOfCar = category.driversPerCar && (i + 1) % category.driversPerCar === 0;
+        const forceBronze = bronzeRequired && isLastSeatOfCar && !carHasBronze[seat.carIndex];
+        const aiDriver = generateAIDriver(rng, team, category, usedNumbers, { forceBronze });
+        if (aiDriver.isBronze) carHasBronze[seat.carIndex] = true;
         aiDrivers[aiDriver.id] = aiDriver;
         seat.driverId = aiDriver.id;
-      }
+      });
       categoryTeams.push(team);
     });
     teams[category.id] = categoryTeams;
@@ -239,7 +252,12 @@ export function findSeatOfDriver(state, driverId) {
   return null;
 }
 
+// A player-owned team never charges the agency for a seat — placing your own drivers there is
+// the whole point of owning it. Waived here rather than at each of the 3 charge sites
+// (assignSeat/joinSecondaryChampionship/acceptSubstituteOffer) since they — and the
+// secondarySeatCost preview below — all call through this single function.
 export function teamSeatCost(team, occupantDriver) {
+  if (team.ownedByPlayer) return 0;
   const base = 800 + team.prestige * 250;
   const bump = occupantDriver ? Math.round(overallRating(occupantDriver) * 200) : 0;
   return Math.round(base + bump);
@@ -265,6 +283,91 @@ export function secondarySeatCost(state, team) {
     }
   }
   return Math.round(teamSeatCost(team, weakestOccupant) * (1 - negotiationDiscount(state)));
+}
+
+// End-game: buying a team outright. All formulas below are derived from category.seatCost/
+// prizeScale/repRequired (already tier-calibrated across karting→F1) rather than a new table —
+// same first-pass-calibration spirit as /60 or MONEY elsewhere this session, adjustable after
+// playtesting.
+export const MAX_TEAM_DEVELOPMENT_LEVEL = 5;
+
+function teamDevelopmentLevel(team) {
+  return team.developmentLevel ?? 1;
+}
+
+// Purchase price scales with both the category's tier (via seatCost) and this specific team's
+// prestige — a mediocre karting team is a cheap entry point, a top F1 team is a fortune.
+export function teamPurchasePrice(team, category) {
+  return Math.round(category.seatCost * (5 + team.prestige / 10));
+}
+
+// Reputation gate is steeper than the category's own repRequired (that one just lets a DRIVER
+// compete there) — owning a team is a much bigger commitment. A flat bonus rather than a
+// multiplier: reputation growth has a hard diminishing-returns ceiling (applyReputationGain,
+// data.js) that makes anything much above ~40-50 in practice extremely slow to reach even over
+// a long game — a ×2.5 multiplier on F1's already-high repRequired (80) would put F1 ownership
+// at 200, past what the reputation economy can realistically deliver.
+export function teamOwnershipRepRequired(category) {
+  return category.repRequired + 30;
+}
+
+// Added straight into participantScore (simulate.js) alongside carScore — applies to every
+// driver racing for this team, not just the player's own, same as team.prestige already does.
+// Capped comparably to the driver-level investment bonus (itself capped at +10).
+export function teamDevelopmentScoreBonus(team) {
+  if (!team.ownedByPlayer) return 0;
+  return (teamDevelopmentLevel(team) - 1) * 3;
+}
+
+export function teamDevelopmentUpgradeCost(team, category) {
+  return Math.round(category.seatCost * 0.5 * teamDevelopmentLevel(team));
+}
+
+export function teamDevelopmentUpkeep(team, category) {
+  return Math.round(category.seatCost * 0.02 * (teamDevelopmentLevel(team) - 1));
+}
+
+// Passive weekly income (constructor prize / team sponsorship, abstracted) — scaled off the
+// category's own prizeScale (already the "how much money moves per race here" unit) rather
+// than a disconnected new number.
+export function teamWeeklyRevenue(team, category) {
+  return Math.round(category.prizeScale * 0.15 * (1 + (teamDevelopmentLevel(team) - 1) * 0.15));
+}
+
+export function buyTeam(state, teamId, { force = false } = {}) {
+  const team = findTeamById(state, teamId);
+  if (!team) return { ok: false, error: "Écurie introuvable." };
+  if (team.ownedByPlayer) return { ok: false, error: "Tu possèdes déjà cette écurie." };
+  const category = CATEGORY_BY_ID[team.categoryId];
+  const repRequired = teamOwnershipRepRequired(category);
+  if (!force && state.agency.reputation < repRequired) {
+    return { ok: false, error: `Réputation insuffisante (${repRequired} requise).` };
+  }
+  const price = force ? 0 : teamPurchasePrice(team, category);
+  if (!force && state.agency.money < price) return { ok: false, error: "Budget insuffisant." };
+  if (price) {
+    state.agency.money -= price;
+    recordTransaction(state, "buy-team", `Rachat — ${team.name}`, -price);
+  }
+  team.ownedByPlayer = true;
+  team.developmentLevel = 1;
+  return { ok: true };
+}
+
+export function upgradeTeamDevelopment(state, teamId, { force = false } = {}) {
+  const team = findTeamById(state, teamId);
+  if (!team || !team.ownedByPlayer) return { ok: false, error: "Tu ne possèdes pas cette écurie." };
+  const level = teamDevelopmentLevel(team);
+  if (level >= MAX_TEAM_DEVELOPMENT_LEVEL) return { ok: false, error: "Niveau de développement maximum atteint." };
+  const category = CATEGORY_BY_ID[team.categoryId];
+  const cost = force ? 0 : teamDevelopmentUpgradeCost(team, category);
+  if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "team-development", `Développement — ${team.name}`, -cost);
+  }
+  team.developmentLevel = level + 1;
+  return { ok: true };
 }
 
 export function releaseSeatAndBackfill(state, driverId, rng) {

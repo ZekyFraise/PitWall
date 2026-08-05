@@ -7,8 +7,11 @@ import {
   tickSubstituteOffers,
   removeOneOffSecondarySeat,
   adjustAgencyTeamRelationship,
+  teamDevelopmentScoreBonus,
+  teamWeeklyRevenue,
+  teamDevelopmentUpkeep,
 } from "./team.js";
-import { refillScoutPool, autoRevealCandidates, resolveScoutSearches, repayLoan } from "./state.js";
+import { refillScoutPool, autoRevealCandidates, resolveScoutSearches, repayLoan, payDriverInstallments } from "./state.js";
 import { tickScoutPoolPoaching, tickFreeAgentPoaching, tickBenchedDriverDecay, bumpRivalReputation } from "./rivals.js";
 import { applyPoints, applyPowerStageBonus, recordRoundResult, rolloverIfNeeded } from "./standings.js";
 import { refillStaffPool, bestSkill } from "./staff.js";
@@ -16,6 +19,7 @@ import { trainingGrowthMultiplier, totalUpkeep, officeCommissionRate, officePati
 import { recordTransaction, recordBalanceSnapshot } from "./finance.js";
 import { triggerRandomEvent, resolveEventChoice } from "./events.js";
 import { refillSponsorPool } from "./sponsors.js";
+import { tickAcademyGraduation, tickAcademyFundCooldowns } from "./academies.js";
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -37,9 +41,12 @@ function crewAverage(drivers, fn) {
 function participantScore(ratingValue, reliabilityValue, team, category, investment, rng) {
   const carScore = team.prestige * 0.9;
   const investmentBonus = investment > 0 ? clamp(Math.sqrt(investment / category.seatCost) * 10, 0, 10) : 0;
+  // A player-owned team's development level lifts EVERY driver racing for it, not just the
+  // player's own — same as carScore/team.prestige already does. 0 for any non-owned team.
+  const developmentBonus = teamDevelopmentScoreBonus(team);
   const noiseSpread = 18 * category.difficulty * (1 - reliabilityValue / 200);
   const noise = (rng() * 2 - 1) * noiseSpread;
-  return ratingValue * 0.65 + carScore * 0.35 + investmentBonus + noise;
+  return ratingValue * 0.65 + carScore * 0.35 + investmentBonus + developmentBonus + noise;
 }
 
 // A round's track style favors specific attributes (ex. Pluie on a rain round) — the bonus/malus
@@ -151,7 +158,7 @@ function simulateClassRace(state, category, teams, classId, rng, roundIndex) {
   }
 
   const physioReduction = (bestSkill(state, "physio") / 95) * 0.4;
-  const isEndurance = category.id === "wec";
+  const isEndurance = category.profile === "endurance";
   const scored = entrants.map((e) => {
     const physio = e.isPlayer ? physioReduction : 0;
     const resistanceReduction = isEndurance ? (crewAverage(e.drivers, (d) => superStat(d, "resistance")) / 99) * 0.3 : 0;
@@ -210,7 +217,6 @@ function simulateClassRace(state, category, teams, classId, rng, roundIndex) {
 
     for (const driver of e.drivers) {
       growDriver(driver, rng, e.isPlayer ? growthMultiplier : 1);
-      driver.age += rng() < 0.02 ? 1 : 0;
       if (!e.dnf) driver.bestPositionThisSeason = Math.min(driver.bestPositionThisSeason ?? Infinity, position);
 
       if (e.isPlayer && state.drivers.some((d) => d.id === driver.id)) {
@@ -336,6 +342,8 @@ function runWeekBody(state, rng) {
   logEntries.push(...tickScoutPoolPoaching(state, rng));
   logEntries.push(...tickFreeAgentPoaching(state, rng));
   logEntries.push(...tickBenchedDriverDecay(state, rng));
+  logEntries.push(...tickAcademyGraduation(state, rng));
+  tickAcademyFundCooldowns(state);
   logEntries.push(...resolveScoutSearches(state, rng));
   tickSubstituteOffers(state, rng);
 
@@ -391,6 +399,16 @@ function runWeekBody(state, rng) {
   }
 
   const currentWeekInSeason = weekInSeason(state.week);
+
+  // Birthday tick: +1 year at the start of every 52-week season (never in year 1, week 1) —
+  // deterministic and world-wide (agency + every AI driver), not the old 2%-per-race roll
+  // (~0.4 years/season), which was far slower than peakAge/ageFactor (driver.js) assume and let
+  // drivers climb several tiers while staying practically the same age.
+  if (currentWeekInSeason === 1 && state.week > 1) {
+    for (const driver of state.drivers) driver.age += 1;
+    for (const driver of Object.values(state.aiDrivers)) driver.age += 1;
+  }
+
   const benched = resolveWeeklyConflicts(state, currentWeekInSeason, rng);
   for (const category of CATEGORIES) {
     const roundIndex = category.calendar.indexOf(currentWeekInSeason);
@@ -418,10 +436,15 @@ function runWeekBody(state, rng) {
   }
   if (amateurFeeTotal > 0) recordTransaction(state, "amateur-fee", "Frais de gestion (amateurs)", amateurFeeTotal);
 
+  // A driverless agency has no race/amateur-fee income at all — halving staff wages ("mise en
+  // sommeil") keeps the roster intact for when a driver comes back, instead of forcing the
+  // player to fire everyone just to survive the gap.
+  const staffWageFactor = state.drivers.length === 0 ? 0.5 : 1;
   let staffWageTotal = 0;
   for (const recruiter of state.staff) {
-    staffWageTotal += recruiter.weeklyWage;
-    state.agency.money -= recruiter.weeklyWage;
+    const wage = Math.round(recruiter.weeklyWage * staffWageFactor);
+    staffWageTotal += wage;
+    state.agency.money -= wage;
   }
   if (staffWageTotal > 0) recordTransaction(state, "staff-wage", "Salaires staff", -staffWageTotal);
 
@@ -439,7 +462,24 @@ function runWeekBody(state, rng) {
   state.agency.money -= upkeep;
   if (upkeep > 0) recordTransaction(state, "infrastructure-upkeep", "Entretien infrastructures", -upkeep);
 
+  // Owned teams (buyTeam, team.js) generate passive weekly income net of their own development
+  // upkeep — flat across every category/subClass, so iterate state.teams generically rather
+  // than special-case any one discipline.
+  let teamRevenueNet = 0;
+  for (const categoryTeams of Object.values(state.teams)) {
+    for (const team of categoryTeams) {
+      if (!team.ownedByPlayer) continue;
+      const category = CATEGORY_BY_ID[team.categoryId];
+      teamRevenueNet += teamWeeklyRevenue(team, category) - teamDevelopmentUpkeep(team, category);
+    }
+  }
+  if (teamRevenueNet !== 0) {
+    state.agency.money += teamRevenueNet;
+    recordTransaction(state, "team-revenue", "Écuries possédées (revenus - entretien)", teamRevenueNet);
+  }
+
   repayLoan(state);
+  payDriverInstallments(state);
 
   recordBalanceSnapshot(state);
 

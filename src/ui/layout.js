@@ -19,6 +19,7 @@ export const NAV = [
       { id: "monde-championnats", label: "Championnats" },
       { id: "monde-ecuries", label: "Écuries" },
       { id: "monde-staff", label: "Staff" },
+      { id: "monde-academies", label: "Académies" },
     ],
   },
 ];
@@ -175,6 +176,15 @@ function poachRiskLine(state) {
   return `<div class="poach-risk-banner">⚠️ Risque de débauchage : ${atRisk.map((d) => d.name).join(", ")}</div>`;
 }
 
+// An empty roster earns nothing (no race prize, no amateur fee) while staff wages/loan payments
+// keep running — proactively surfacing the two recovery levers (signCost's reconstruction
+// discount, loanMaxAmount's raised ceiling, both state.js) rather than leaving the player to
+// discover the situation only once the treasury has already gone deeply negative.
+function noDriverBanner(state) {
+  if (state.drivers.length > 0) return "";
+  return `<div class="banner-danger">Aucun pilote sous contrat — l'agence ne génère plus aucun revenu de course. Les prix de signature sont réduits et le plafond d'emprunt est relevé tant que l'effectif est vide.</div>`;
+}
+
 function renderTopbar(state) {
   const year = Math.ceil(state.week / SEASON_WEEKS);
   const currentWeek = weekInSeason(state.week);
@@ -215,7 +225,7 @@ export function renderShell(state, contentHtml) {
     <div class="shell-body">
       ${renderSidebar(state)}
       <main class="content">
-        ${bankrupt ? `<div class="banner-danger">Trésorerie très négative — l'agence est en faillite. Lance une nouvelle partie ou renfloue les caisses.</div>` : ""}
+        ${bankrupt ? `<div class="banner-danger">Trésorerie très négative — l'agence est en faillite. Lance une nouvelle partie ou renfloue les caisses.</div>` : noDriverBanner(state)}
         ${contentHtml}
       </main>
     </div>`;

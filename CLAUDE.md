@@ -14,8 +14,9 @@
 **Pit Wall** est un jeu de gestion/agent de pilotes de sport automobile, navigateur, solo,
 inspiré de Football Manager / Soccer Agent transposé au monde de la course automobile.
 Le joueur dirige une **agence** qui recrute, scoute, signe et place des pilotes dans des
-écuries à travers plusieurs championnats (Karting, F4, F3, F2, F1, WEC, WRC), gère son
-staff, sa trésorerie et sa réputation, semaine après semaine sur des saisons de 52 semaines.
+écuries à travers 12 catégories réparties en 4 familles — Karting (Senior/KZ1/KZ2), Monoplace
+(F4/F3/F2/F1), Endurance (WEC/MLMC/ELMS), Rallye (WRC/WRC2) — gère son staff, sa trésorerie et
+sa réputation, semaine après semaine sur des saisons de 52 semaines.
 
 Pas de framework, pas de build lourd, priorité à l'équilibrage et aux mécaniques profondes
 plutôt qu'au visuel.
@@ -62,23 +63,24 @@ sens des imports avant d'en ajouter un nouveau pour éviter les cycles.
 
 | Fichier | Responsabilité |
 |---|---|
-| `data.js` | `CATEGORIES` (source de vérité unique : tier, calendrier, structure d'équipe, marques, barème de points), constantes saison (52 sem), noms aléatoires, agences rivales, `AGENCY_SPECIALTIES` (spécialités de fondation) |
-| `driver.js` | Génération de pilote, 25 attributs (technique/mental/physique/discipline) + 5 super stats dérivées (`SUPER_STATS`/`superStat`), `overallRating`, `reliability`, `growDriver`, `pickRaceNumber` |
+| `data.js` | `CATEGORIES` (source de vérité unique : tier, calendrier, structure d'équipe, marques, barème de points, `profile` circuit/endurance/rallye pour la pondération des super stats), constantes saison (52 sem), noms aléatoires, agences rivales, `AGENCY_SPECIALTIES` (spécialités de fondation), `CATEGORY_EMOJI` |
+| `driver.js` | Génération de pilote, 32 attributs bruts (technique/mental/physique/discipline) + 5 super stats dérivées (`SUPER_STATS`/`superStat`), `overallRating`, `reliability`, `growDriver`, `pickRaceNumber`, flags `isPro`/`isBronze` |
 | `driverStats.js` | Valeur marché, résultats de saison, classement d'un pilote |
-| `team.js` | Génération des écuries (grilles, marques), `assignSeat`, `proposeToTeams`/`joinTeam`, workload multi-championnat, `negotiateTransfer` (marché des transferts) |
+| `team.js` | Génération des écuries (grilles, marques, contrainte "≥1 pilote Bronze/voiture" dans les classes qui l'exigent), `assignSeat`, `proposeToTeams`/`joinTeam`, workload multi-championnat, `negotiateTransfer` (marché des transferts) |
 | `standings.js` | Points (barèmes par catégorie/classe), Power Stage WRC, classements, rollover de saison (déclenche `checkSeasonTraitMilestone`) |
 | `simulate.js` | Simulation hebdomadaire complète (`beginWeek`/`continueWeekAfterChoice`), résultats de course, croissance, salaires, revenu/primes sponsor |
 | `rivals.js` | Agences IA, débauchage (`tickFreeAgentPoaching`, `tickBenchedDriverDecay`), `poachCompensation` |
 | `events.js` | Moteur d'événements aléatoires hebdomadaires (info + choix), cooldowns, dilemme de débauchage prioritaire |
 | `staff.js` | 7 rôles de staff, pool de recrutement (fog-of-war, scout/deep-scout), spécialités/profils elite, génération IA massive + attribution aux rivales |
 | `traits.js` | 15 traits pilote (fixes à la génération) + 10 traits staff, dont 6 traits pilote **acquérables dynamiquement** en fin de saison (`checkSeasonTraitMilestone`/`grantAcquiredTrait`) |
-| `scoutReveal.js` | Fourchettes de révélation du scouting (normal vs approfondi), pour pilotes et staff |
+| `scoutReveal.js` | Fourchettes de révélation du scouting (normal vs approfondi) pour pilotes et staff — garantit 1 attribut révélé par super stat pilote |
+| `academies.js` | Académies de pilote (6, liées à une équipe existante par programme phare F1/WEC/WRC), relation dédiée, surcoût de recrutement, financement, retrait du vivier si non recruté à temps |
 | `lifestyle.js` | "Vie personnelle" de l'agent (Logement/Véhicule/Formation), pur confort + réputation à l'achat |
 | `sponsors.js` | Contrat de sponsoring unique (revenu hebdo + primes victoire/podium), 4 paliers gatés par réputation |
 | `infrastructure.js` | Bureaux/Centre d'entraînement/Bureau de standing/Qualité des recruteurs/Réseau de contacts (8 paliers pour les infra principales), boutique agence |
 | `recruit.js` | Approche de pilotes déjà établis (rivaux ou indépendants) |
 | `finance.js` | Transactions, historique, plafonds (200 tx / 52 semaines) |
-| `state.js` | `createNewGame` (nom/couleur/spécialité de fondation), save/load, `SCHEMA_VERSION`, scouting, signature, négociation de contrat + contre-offre du pilote |
+| `state.js` | `createNewGame` (nom/couleur/spécialité de fondation), save/load, `SCHEMA_VERSION`, scouting, `negotiateSigning` (négociation de recrutement) + `signDriver` (mode dev), `fabricatePriorCareer` (historique fabriqué des recrues >19 ans), négociation de contrat + contre-offre du pilote |
 | `rng.js` | `mulberry32` |
 
 ### Carte des fichiers (`src/ui/`)
@@ -88,12 +90,12 @@ sens des imports avant d'en ajouter un nouveau pour éviter les cycles.
 | `titleScreen.js` | Écran titre, création de partie (nom + couleur + spécialité de fondation) |
 | `layout.js` | Coquille (topbar, sidebar, nav, bannière courses à venir/alertes) |
 | `render.js` | Table de dispatch `activeMenu -> render function` |
-| `views/agency.js` | Mes pilotes, Talents, Staff, Finances, Investissement (dont Sponsoring), Nouveautés, Résultats, fiche pilote |
-| `views/world.js` | Monde → Pilotes (liste plate) / Championnats / Écuries / Staff |
+| `views/agency.js` | Mes pilotes (dont checklist "Premiers pas"), Talents, Staff, Finances, Investissement (dont Sponsoring), Nouveautés, Résultats, fiche pilote |
+| `views/world.js` | Monde → Pilotes (liste plate) / Championnats / Écuries / Staff / Académies — onglets de catégorie groupés par famille (une ligne par famille, `.tab-row`) |
 | `views/palmares.js` | Champions par saison/catégorie + distinctions ("Pilote de l'agence", "Révélation") |
 | `views/dev.js` | Menu développeur (activable via `state.ui.devMode`) |
 | `charts.js` | Graphiques SVG (ligne trésorerie, barres recettes/dépenses + popup au survol) |
-| `dialogs.js` | `showToast`, `showConfirm`, `showEventModal`, `showResultModal` (file d'attente de popups résultat) |
+| `dialogs.js` | `showToast` (coin bas-droit), `showResultToast` (résultats de dilemme/événement — même toast), `showResultModal` (réservé aux résultats de COURSE marquants — grand modal centré), `showConfirm`, `showEventModal` (choix de dilemme), `showNegotiationModal` (fenêtre de négociation, reste ouverte sur un refus avec contre-offre pré-remplie) |
 
 ## Conventions à respecter
 
@@ -123,6 +125,27 @@ sens des imports avant d'en ajouter un nouveau pour éviter les cycles.
   poser temporairement `window.__pwState = () => state; window.__pwRender = () => render();`
   juste avant `handleSimulate` dans `main.js`, manipuler l'état en direct via le pane Browser,
   puis **retirer le hook avant de terminer** (grep `TEMP DEBUG HOOK` s'il en reste un oublié).
+- **Catégorie = donnée déclarative, jamais un check d'id hardcodé** : le système de classes/
+  voitures multi-pilotes de WEC (`classes`/`driversPerCar`/`carClassification`) est entièrement
+  générique (team.js/simulate.js/standings.js/world.js) — une nouvelle catégorie qui réutilise
+  ces champs fonctionne sans toucher ces fichiers. Le seul endroit qui distingue les catégories
+  par comportement est `category.profile` (`"endurance"`/`"rallye"`/défaut `"circuit"`, lu par
+  `disciplineKeyFor`/`overallWeightsFor` dans driver.js et `isEndurance` dans simulate.js) —
+  ajouter une catégorie signifie poser ce champ dans `data.js`, jamais ajouter un
+  `category.id === "xxx"` quelque part dans le moteur.
+- **`adjustOverall` (events.js) doit respecter `driver.growthCeiling`** : tout dilemme qui
+  modifie le niveau d'un pilote passe par cette fonction, qui borne un delta positif par la
+  marge restante avant le plafond de croissance (même logique que `growDriver`, driver.js) —
+  ne jamais réintroduire un chemin qui incrémente `driver.attributes` directement sans repasser
+  par elle, sous peine de recontourner le système de plafond/rareté des pilotes déjà calibré.
+- **`state.drivers.length === 0` est le gate reconnu de "détresse de reconstruction"** — une
+  agence sans aucun pilote n'a plus de revenu de course/frais amateurs mais continue de payer
+  staff/prêt. Ce check est délibérément réutilisé tel quel à plusieurs endroits pour assouplir
+  les mécaniques concernées le temps de reconstruire (`signCost`/`loanMaxAmount`, state.js ;
+  réduction des salaires de staff, simulate.js ; risque de départ réduit du dilemme
+  "Tentative de débauchage", events.js ; `noDriverBanner`, layout.js) plutôt que de créer un
+  nouveau flag d'état dédié — toute nouvelle mécanique de reconstruction doit s'appuyer sur ce
+  même check plutôt qu'en introduire un autre.
 
 ## Instructions permanentes de l'utilisateur
 

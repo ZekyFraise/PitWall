@@ -296,6 +296,26 @@ button.small {
   margin-bottom: 0.4rem;
 }
 
+.tutorial-card {
+  margin-bottom: 1rem;
+  border-color: var(--accent-2);
+}
+
+.tutorial-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.tutorial-step-done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .pill {
   display: inline-block;
   background: var(--panel);
@@ -656,6 +676,29 @@ select, input[type="number"] {
 .tab {
   font-size: 0.78rem;
   padding: 0.35rem 0.7rem;
+}
+
+/* Each category family lives on its own row — label + its own .tabs never share a line with
+   another family, so a family's buttons can only ever wrap within their own row. */
+.tab-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.tab-row .tabs {
+  margin-bottom: 0;
+}
+
+.tab-group-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  min-width: 5.5rem;
+  flex-shrink: 0;
 }
 
 .filter-row {
@@ -1132,6 +1175,19 @@ h3 {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 1rem;
+}
+
+.negotiation-modal .negotiation-offer-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.negotiation-modal .negotiation-offer-label input {
+  width: 120px;
 }
 
 .result-modal {

@@ -3,6 +3,17 @@
 // more. Karting and WEC/WRC get their own tables below, where the real-world disciplines
 // actually do diverge (smaller/less formal grids, endurance class-size gaps, rally's Power Stage).
 const STANDARD_POINTS_TABLE = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+// Grassroots/regional-style scoring — a much shorter payout than the FIA ladder above it,
+// reflecting karting's status as the entry rung rather than a full pro championship. Shared by
+// every karting-tier category (Senior, KZ1, KZ2).
+const KARTING_POINTS_TABLE = [20, 16, 13, 11, 9, 7, 5, 3];
+const KARTING_BRANDS = ["Tony Kart", "CRG", "Birel ART", "Sodikart", "Kosmic", "Praga"];
+// Real-world GT3 grids overlap heavily across WEC/MLMC/ELMS — same manufacturer pool, shared
+// rather than tripled.
+const GT3_BRANDS = [
+  "Porsche", "Ferrari", "Aston Martin", "BMW", "Lamborghini", "McLaren", "Ford",
+  "Corvette", "Lexus", "Mercedes-AMG", "Audi", "Honda", "Bentley", "Nissan",
+];
 
 export const CATEGORIES = [
   {
@@ -16,10 +27,36 @@ export const CATEGORIES = [
     gridSize: 60,
     variableSeats: { min: 1, max: 4 },
     constructorsTopN: 2,
-    brands: ["Tony Kart", "CRG", "Birel ART", "Sodikart", "Kosmic", "Praga"],
-    // Grassroots/regional-style scoring — a much shorter payout than the FIA ladder above it,
-    // reflecting karting's status as the entry rung rather than a full pro championship.
-    pointsTable: [20, 16, 13, 11, 9, 7, 5, 3],
+    brands: KARTING_BRANDS,
+    pointsTable: KARTING_POINTS_TABLE,
+  },
+  {
+    id: "kartingKz1",
+    name: "Karting KZ1",
+    tier: 0,
+    difficulty: 0.6,
+    seatCost: 2000,
+    prizeScale: 400,
+    repRequired: 0,
+    gridSize: 60,
+    variableSeats: { min: 1, max: 4 },
+    constructorsTopN: 2,
+    brands: KARTING_BRANDS,
+    pointsTable: KARTING_POINTS_TABLE,
+  },
+  {
+    id: "kartingKz2",
+    name: "Karting KZ2",
+    tier: 0,
+    difficulty: 0.6,
+    seatCost: 2000,
+    prizeScale: 400,
+    repRequired: 0,
+    gridSize: 60,
+    variableSeats: { min: 1, max: 4 },
+    constructorsTopN: 2,
+    brands: KARTING_BRANDS,
+    pointsTable: KARTING_POINTS_TABLE,
   },
   {
     id: "f4",
@@ -85,6 +122,7 @@ export const CATEGORIES = [
     driversPerCar: 2,
     carClassification: true,
     branch: true,
+    profile: "endurance",
     classes: [
       {
         id: "hypercar",
@@ -100,13 +138,105 @@ export const CATEGORIES = [
       {
         id: "gt3",
         label: "GT3",
-        brands: [
-          "Porsche", "Ferrari", "Aston Martin", "BMW", "Lamborghini", "McLaren", "Ford",
-          "Corvette", "Lexus", "Mercedes-AMG", "Audi", "Honda", "Bentley", "Nissan",
-        ],
+        brands: GT3_BRANDS,
         teamCount: 18,
         carsPerTeam: 2,
         // Twice the grid of Hypercar — a full top-10 stays meaningful here.
+        pointsTable: STANDARD_POINTS_TABLE,
+      },
+    ],
+  },
+  // Feeder series under WEC — tier 2 (same rung as F3), not tier 3: these are stepping stones
+  // toward WEC, not equivalent to it. "1 bronze/voiture" classes (requiresBronze) require at
+  // least one driver.isBronze crewmate per car — enforced at initial AI generation only
+  // (generateAllTeams, team.js), not on later backfills or on the player (see plan notes).
+  {
+    id: "mlmc",
+    name: "Michelin Le Mans Cup",
+    tier: 2,
+    difficulty: 0.75,
+    seatCost: 45000,
+    prizeScale: 4500,
+    repRequired: 15,
+    driversPerCar: 2,
+    carClassification: true,
+    branch: true,
+    profile: "endurance",
+    classes: [
+      {
+        id: "lmp3",
+        label: "LMP3",
+        brands: ["Ligier", "Duqueine", "Norma", "Ave"],
+        teamCount: 22,
+        carsPerTeam: 1,
+        pointsTable: STANDARD_POINTS_TABLE,
+      },
+      {
+        id: "lmp3-proam",
+        label: "LMP3 Pro/Am",
+        brands: ["Ligier", "Duqueine", "Norma", "Ave"],
+        teamCount: 12,
+        carsPerTeam: 1,
+        requiresBronze: true,
+        pointsTable: STANDARD_POINTS_TABLE,
+      },
+      {
+        id: "gt3",
+        label: "GT3",
+        brands: GT3_BRANDS,
+        teamCount: 10,
+        carsPerTeam: 1,
+        requiresBronze: true,
+        pointsTable: STANDARD_POINTS_TABLE,
+      },
+    ],
+  },
+  {
+    id: "elms",
+    name: "European Le Mans Series",
+    tier: 2,
+    difficulty: 0.78,
+    seatCost: 65000,
+    prizeScale: 6500,
+    repRequired: 20,
+    driversPerCar: 3,
+    carClassification: true,
+    branch: true,
+    profile: "endurance",
+    classes: [
+      {
+        id: "lmp2",
+        label: "LMP2",
+        brands: ["Oreca", "Ligier", "Duqueine", "Multimatic"],
+        teamCount: 12,
+        carsPerTeam: 1,
+        pointsTable: STANDARD_POINTS_TABLE,
+      },
+      {
+        id: "lmp2-proam",
+        label: "LMP2 Pro/Am",
+        brands: ["Oreca", "Ligier", "Duqueine", "Multimatic"],
+        teamCount: 12,
+        carsPerTeam: 1,
+        requiresBronze: true,
+        pointsTable: STANDARD_POINTS_TABLE,
+      },
+      {
+        id: "lmp3",
+        label: "LMP3",
+        brands: ["Ligier", "Duqueine", "Norma", "Ave"],
+        teamCount: 8,
+        carsPerTeam: 1,
+        requiresBronze: true,
+        pointsTable: STANDARD_POINTS_TABLE,
+      },
+      {
+        id: "gt3",
+        label: "GT3",
+        brands: GT3_BRANDS,
+        teamCount: 10,
+        carsPerTeam: 1,
+        requiresBronze: true,
         pointsTable: STANDARD_POINTS_TABLE,
       },
     ],
@@ -123,11 +253,31 @@ export const CATEGORIES = [
     teamSizes: [5, 5, 6],
     constructorsEnabled: false,
     branch: true,
+    profile: "rallye",
     brands: ["Toyota", "Hyundai", "Ford", "Skoda", "Citroën"],
     pointsTable: STANDARD_POINTS_TABLE,
     // Real WRC's signature bonus: the top 5 on the rally's closing Power Stage earn extra points
     // on top of the overall result, independent of final classification (see
     // applyPowerStageBonus, standings.js).
+    powerStageBonus: [5, 4, 3, 2, 1],
+  },
+  // Feeder series under WRC — tier 2, same structure as WRC itself (per explicit request:
+  // "pareil qu'en WRC"), just a smaller grid and lower economics befitting a lower rung.
+  {
+    id: "wrc2",
+    name: "WRC2",
+    tier: 2,
+    difficulty: 0.75,
+    seatCost: 40000,
+    prizeScale: 4000,
+    repRequired: 15,
+    gridSize: 13,
+    teamSizes: [4, 4, 5],
+    constructorsEnabled: false,
+    branch: true,
+    profile: "rallye",
+    brands: ["Toyota", "Hyundai", "Ford", "Skoda", "Citroën"],
+    pointsTable: STANDARD_POINTS_TABLE,
     powerStageBonus: [5, 4, 3, 2, 1],
   },
 ];
@@ -182,7 +332,12 @@ export function allocateVariableTeamSizes(total, min, max, rng) {
   return sizes;
 }
 
-const ROUND_COUNTS = { karting: 20, f4: 11, f3: 15, f2: 18, f1: 24, wec: 8, rally: 12 };
+const ROUND_COUNTS = {
+  karting: 20, kartingKz1: 20, kartingKz2: 20,
+  f4: 11, f3: 15, f2: 18, f1: 24,
+  wec: 8, mlmc: 6, elms: 8,
+  rally: 12, wrc2: 12,
+};
 
 // Each round has a track style favoring specific attributes — a driver strong in Pluie is
 // advantaged on a "pluvieux" round, relative to their OWN general level, rather than every
@@ -212,12 +367,17 @@ export const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]
 // single-seater ladder (karting → f1) reads as a progression, WEC/rally get their own icons.
 export const CATEGORY_EMOJI = {
   karting: "🏎️",
+  kartingKz1: "🏎️",
+  kartingKz2: "🏎️",
   f4: "🔰",
   f3: "🥉",
   f2: "🥈",
   f1: "🏆",
   wec: "⏱️",
+  mlmc: "🥐",
+  elms: "🇪🇺",
   rally: "🌲",
+  wrc2: "🌳",
 };
 
 export const FIELD_STRENGTH_BY_TIER = { 0: 32, 1: 48, 2: 60, 3: 72, 4: 88 };

@@ -5,14 +5,25 @@ import {
   signCostRange,
   contractBaseline,
   LOAN_ELIGIBLE_THRESHOLD,
-  LOAN_MAX_AMOUNT,
+  loanMaxAmount,
   LOAN_DURATION_MONTHS_OPTIONS,
   loanWeeksForMonths,
   scoutSearchCost,
   staffScoutCost,
   staffDeepScoutCost,
 } from "../../game/state.js";
-import { findTeamById, totalWorkload, agencyTeamRelationship, AGENCY_TEAM_RELATIONSHIP_DEFAULT, transferNegotiationWindow } from "../../game/team.js";
+import {
+  findTeamById,
+  totalWorkload,
+  agencyTeamRelationship,
+  AGENCY_TEAM_RELATIONSHIP_DEFAULT,
+  transferNegotiationWindow,
+  MAX_TEAM_DEVELOPMENT_LEVEL,
+  teamDevelopmentUpgradeCost,
+  teamDevelopmentUpkeep,
+  teamDevelopmentScoreBonus,
+  teamWeeklyRevenue,
+} from "../../game/team.js";
 import { POACH_WARNING_THRESHOLD } from "../../game/rivals.js";
 import {
   FACILITIES,
@@ -28,6 +39,7 @@ import { LIFESTYLE, lifestyleMaxLevel, getLifestyleLevelData, nextLifestyleLevel
 import { driverMarketValue, seasonResultsFor, championshipStanding } from "../../game/driverStats.js";
 import { racesUntilSeasonEnd, resolveSeasonView } from "../../game/standings.js";
 import { positionColorClass, approachCell } from "./world.js";
+import { academyById, academyFlagshipLabel } from "../../game/academies.js";
 import { aggregatedTotals, breakdownByType, TRANSACTION_LABELS } from "../../game/finance.js";
 import { lineChart, barChart } from "../charts.js";
 import { DRIVER_TRAITS, STAFF_TRAITS, driverTraitTooltip, staffTraitTooltip } from "../../game/traits.js";
@@ -234,6 +246,22 @@ function priceLabel(state, driver) {
   return `${low.toLocaleString("fr-FR")}–${high.toLocaleString("fr-FR")}€`;
 }
 
+// Recruiting an academy-affiliated prospect already costs more (baked into signCost) — this
+// badge is just the player-facing "why", shown wherever a prospect card/row appears.
+function academyBadge(state, driver) {
+  if (!driver.academyId) return "";
+  const academy = academyById(state, driver.academyId);
+  if (!academy) return "";
+  return `<span class="pill accent" title="Affilié à ${academy.name} — objectif : ${academyFlagshipLabel(academy)} (${academy.teamName}). Le recruter coûte plus cher tant que la relation avec cette académie reste basse.">🎓 ${academy.name}</span>`;
+}
+
+// Rare driver rating required for at least one seat per car in MLMC/ELMS PRO/AM & GT3 classes
+// (data.js requiresBronze) — shown unconditionally like isPro, not gated behind scouting.
+function bronzeBadge(driver) {
+  if (!driver.isBronze) return "";
+  return `<span class="pill" title="Pilote Bronze — éligible aux sièges PRO/AM des classes qui exigent un équipage mixte (MLMC/ELMS).">🥉 Bronze</span>`;
+}
+
 function attributeSection(driver, group) {
   const keys = Object.keys(ATTRIBUTE_META).filter((k) => ATTRIBUTE_META[k].group === group);
   return `
@@ -396,10 +424,15 @@ function contractNegotiationSection(state, driver) {
         €
       </label>
       <p class="muted hint">Fourchette indicative : ${baseline.weeklyWageWindow.min.toLocaleString("fr-FR")}–${baseline.weeklyWageWindow.max.toLocaleString("fr-FR")}€/sem.</p>
-      <label class="invest-line" title="Indemnité de transfert : somme payée IMMÉDIATEMENT par l'agence au pilote à la signature du contrat, prélevée sur ta trésorerie actuelle. Plus elle est haute, plus l'offre paraît généreuse au pilote, mais elle doit rester dans la limite de ta trésorerie disponible.">
+      <label class="invest-line" title="Indemnité de transfert : somme versée par l'agence au pilote à la signature du contrat, prélevée sur ta trésorerie. Plus elle est haute, plus l'offre paraît généreuse au pilote. Peut être étalée sur plusieurs semaines ci-dessous plutôt que débitée d'un coup.">
         Indemnité de transfert
         <input type="number" min="0" step="500" data-role="negotiate-fee" value="${baseline.transferFee}" />
         €
+      </label>
+      <label class="invest-line" title="Étale le paiement de l'indemnité de transfert sur plusieurs semaines au lieu de la débiter en une fois — seul le premier versement est prélevé à la signature. Le pilote juge l'offre sur le montant total, pas sur l'étalement.">
+        Étaler sur
+        <input type="number" min="1" max="6" step="1" data-role="negotiate-installments" value="1" />
+        versement(s)
       </label>`;
 
   return `
@@ -414,7 +447,7 @@ function contractNegotiationSection(state, driver) {
         Durée (saisons)
         <input type="number" min="1" max="5" step="1" data-role="negotiate-seasons" value="1" />
       </label>
-      <p class="muted hint">Trésorerie disponible : ${state.agency.money.toLocaleString("fr-FR")}€${driver.isPro ? "" : " — l'indemnité de transfert est débitée dès l'acceptation du contrat, pas à crédit."}</p>
+      <p class="muted hint">Trésorerie disponible : ${state.agency.money.toLocaleString("fr-FR")}€${driver.isPro ? "" : " — seul le premier versement de l'indemnité est débité à l'acceptation, le reste suit chaque semaine si tu l'as étalée."}</p>
       <div class="card-actions">
         <button data-action="negotiate-contract" data-id="${driver.id}">Proposer le contrat</button>
       </div>
@@ -546,6 +579,8 @@ function logEntry(entry) {
       return `<li class="highlight-line">Titre écurie : ${entry.teamName} est champion de ${entry.category.name} (saison ${entry.seasonNumber}).</li>`;
     case "sponsor-contract-ended":
       return `<li class="muted">Le contrat avec ${entry.sponsorName} arrive à échéance.</li>`;
+    case "academy-graduation":
+      return `<li class="muted">${entry.driverName} rejoint le programme phare de l'${entry.academyName} (${entry.flagshipLabel}) — plus disponible au recrutement.</li>`;
     case "driver-trait-acquired": {
       const trait = DRIVER_TRAITS[entry.traitId];
       const replaced = entry.replacedTraitId ? DRIVER_TRAITS[entry.replacedTraitId] : null;
@@ -674,10 +709,39 @@ function driverTableRow(state, driver) {
     </tr>`;
 }
 
+const TUTORIAL_STEPS = [
+  { key: "scouted", label: "Scouter un pilote (Talents)" },
+  { key: "signed", label: "Signer un pilote" },
+  { key: "proposed", label: "Le proposer à des écuries" },
+  { key: "simulated", label: "Simuler une semaine" },
+];
+
+// Dismissible onboarding checklist — shown on the Agency home screen until every step is done
+// AND the player chooses to hide it, or they dismiss it early. Each flag is set from main.js
+// (the only layer that sees every action's result across game.js/team.js), never here.
+function tutorialCard(state) {
+  const tutorial = state.tutorial;
+  if (!tutorial || tutorial.dismissed) return "";
+  const allDone = TUTORIAL_STEPS.every((s) => tutorial[s.key]);
+  const items = TUTORIAL_STEPS.map(
+    (s) => `<li class="${tutorial[s.key] ? "tutorial-step-done" : ""}">${tutorial[s.key] ? "✅" : "☐"} ${s.label}</li>`
+  ).join("");
+  return `
+    <div class="card tutorial-card">
+      <div class="card-head">
+        <strong>Premiers pas</strong>
+        <button data-action="dismiss-tutorial" class="secondary small">Masquer</button>
+      </div>
+      <ul class="tutorial-steps">${items}</ul>
+      ${allDone ? `<p class="muted">Tout est fait — tu peux masquer ce guide.</p>` : ""}
+    </div>`;
+}
+
 export function renderMyDrivers(state) {
   const rows = state.drivers.map((d) => driverTableRow(state, d)).join("");
   return `
     <h2>Mes pilotes</h2>
+    ${tutorialCard(state)}
     <p class="muted">${state.drivers.length} / ${rosterCapacity(state)} pilotes</p>
     ${compareBar("compare-drivers", "clear-compare-drivers", state.ui.compareDriverIds ?? [], "pilote(s)")}
     <div class="table-scroll">
@@ -764,6 +828,8 @@ function prospectDetail(state, driver) {
       <div class="card-head">
         <strong>${driver.name}</strong>
         <span class="pill">${driver.sex} · ${driver.age} ans</span>
+        ${academyBadge(state, driver)}
+        ${bronzeBadge(driver)}
       </div>
       <div class="muted">Talent non signé — pas encore sous contrat d'agence.</div>
       <div class="potential">Potentiel : <b>${potential}</b></div>
@@ -819,7 +885,7 @@ function readOnlyDriverDetail(state, driver) {
     <button data-action="back-to-roster" class="btn-red btn-large">← Retour</button>
     <h2>${driver.name} ${driverIdTag(driver)}</h2>
     <div class="card">
-      <div class="card-head"><strong>${driver.name}</strong></div>
+      <div class="card-head"><strong>${driver.name}</strong> ${bronzeBadge(driver)}</div>
       <div class="identity-line">${driver.sex} · ${driver.age} ans · OVR ${rating} · ${driverStatusLabel(driver, category)}</div>
       <div class="muted">${seatLabel} · ${driver.categoryId ? categoryLabel(driver.categoryId) : "Non affecté"} · ${managedLabel}</div>
       <div class="muted">Cette saison : ${points} pts · ${position ? `P${position}` : "—"} au championnat</div>
@@ -859,6 +925,10 @@ export function renderDriverDetail(state) {
         driver.isPro
           ? `Commission : ${Math.round(driver.contract.commissionRate * 100)}%`
           : `Frais de gestion perçus : ${driver.contract.weeklyWage.toLocaleString("fr-FR")}€/sem`
+      }${
+        driver.pendingContractInstallment
+          ? ` · Versements restants sur l'indemnité : ${driver.pendingContractInstallment.remaining.toLocaleString("fr-FR")}€ (${driver.pendingContractInstallment.weeklyPayment.toLocaleString("fr-FR")}€/sem)`
+          : ""
       }`
     : team
       ? `<span class="warn">Sans contrat d'agence — en piste chez ${team.name}, risque de débauchage</span>`
@@ -895,6 +965,7 @@ export function renderDriverDetail(state) {
     <div class="card">
       <div class="card-head">
         <strong>${driver.name}</strong>
+        ${bronzeBadge(driver)}
       </div>
       <div class="identity-line">${driver.sex} · ${driver.age} ans · OVR ${rating} · ${driverStatusLabel(driver, category)}</div>
       <div class="muted">${seatLabel} · ${driver.categoryId ? categoryLabel(driver.categoryId) : "Non affecté"} · Peak à ${peakAge(driver)} ans</div>
@@ -946,7 +1017,7 @@ function talentsRow(state, driver) {
   }).join("");
   return `
     <tr data-action="view-driver" data-id="${driver.id}" class="clickable-row">
-      <td>${driver.name} ${driverIdTag(driver)}</td>
+      <td>${driver.name} ${driverIdTag(driver)} ${academyBadge(state, driver)} ${bronzeBadge(driver)}</td>
       <td>${driver.sex}</td>
       <td>${driver.age}</td>
       <td>${potential}</td>
@@ -1403,9 +1474,9 @@ function loanSection(state) {
     <div class="propose-box">
       <h3>Emprunter</h3>
       <p class="muted" title="Le prêt est remboursé automatiquement chaque semaine jusqu'à extinction. Un seul prêt actif à la fois.">Trésorerie critique — un prêt est possible pour éviter le blocage. Total à rembourser : montant × 1,25, étalé sur la durée choisie.</p>
-      <label class="invest-line" title="Montant emprunté, versé immédiatement. Plafonné pour éviter d'en faire un outil de croissance plutôt qu'une bouée de secours.">
+      <label class="invest-line" title="Montant emprunté, versé immédiatement. Plafonné pour éviter d'en faire un outil de croissance plutôt qu'une bouée de secours (plafond relevé quand l'effectif est à 0, pour financer une vraie reconstruction).">
         Montant
-        <input type="number" min="0" max="${LOAN_MAX_AMOUNT}" step="500" data-role="loan-amount" value="${LOAN_MAX_AMOUNT}" />
+        <input type="number" min="0" max="${loanMaxAmount(state)}" step="500" data-role="loan-amount" value="${loanMaxAmount(state)}" />
         €
       </label>
       <label class="invest-line" title="Durée de remboursement — plus elle est courte, plus la mensualité prélevée chaque semaine est élevée.">
@@ -1555,6 +1626,44 @@ function sponsorsSection(state) {
     }`;
 }
 
+// End-game — every team.ownedByPlayer across every category, flattened. Mirrors facilityCard's
+// shape (stars, current effect, next-palier preview, gated upgrade button) since it's the same
+// "discrete tiers with upkeep" pattern, just per-team instead of per-facility.
+function teamOwnershipCard(state, team) {
+  const category = CATEGORY_BY_ID[team.categoryId];
+  const level = team.developmentLevel ?? 1;
+  const revenue = teamWeeklyRevenue(team, category);
+  const upkeep = teamDevelopmentUpkeep(team, category);
+  const atMax = level >= MAX_TEAM_DEVELOPMENT_LEVEL;
+  const nextCost = atMax ? null : teamDevelopmentUpgradeCost(team, category);
+  const actionButton = atMax
+    ? `<span class="pill">Niveau maximum</span>`
+    : `<button data-action="upgrade-team-development" data-id="${team.id}" class="btn-green">Développer (${nextCost.toLocaleString("fr-FR")}€)</button>`;
+  return `
+    <div class="card">
+      <div class="card-head">
+        <strong>${team.name}</strong>
+        <span class="pill" title="Niveau ${level}/${MAX_TEAM_DEVELOPMENT_LEVEL}">${facilityLevelStars(level, MAX_TEAM_DEVELOPMENT_LEVEL)}</span>
+      </div>
+      <div class="muted">${category.name}${team.subClass ? ` — ${category.classes?.find((c) => c.id === team.subClass)?.label ?? team.subClass}` : ""}</div>
+      <div class="finance-figure">+${revenue.toLocaleString("fr-FR")}€/sem − ${upkeep.toLocaleString("fr-FR")}€/sem d'entretien</div>
+      <div class="muted">Bonus de performance pour tous les pilotes de l'écurie : +${teamDevelopmentScoreBonus(team)}</div>
+      <div class="card-actions">${actionButton}</div>
+    </div>`;
+}
+
+function ownedTeams(state) {
+  return Object.values(state.teams).flat().filter((t) => t.ownedByPlayer);
+}
+
+function teamOwnershipSection(state) {
+  const owned = ownedTeams(state);
+  if (owned.length === 0) return "";
+  return `
+    <h3>Mes écuries</h3>
+    <div class="card-grid">${owned.map((t) => teamOwnershipCard(state, t)).join("")}</div>`;
+}
+
 export function renderInvestments(state) {
   return `
     <h2>Investissement</h2>
@@ -1562,6 +1671,8 @@ export function renderInvestments(state) {
     <div class="card-grid">
       ${Object.keys(FACILITIES).map((id) => facilityCard(state, id)).join("")}
     </div>
+
+    ${teamOwnershipSection(state)}
 
     <h3>Boutique de l'agence</h3>
     <div class="card-grid">
@@ -1576,7 +1687,7 @@ export function renderInvestments(state) {
     </div>`;
 }
 
-const NEWS_TYPES = new Set(["rival-scout-sign", "rival-poach", "recruit-established", "random-event", "sponsor-contract-ended"]);
+const NEWS_TYPES = new Set(["rival-scout-sign", "rival-poach", "recruit-established", "random-event", "sponsor-contract-ended", "academy-graduation"]);
 // random-event is shared with NEWS_TYPES on purpose — an event outcome is real gameplay news
 // AND a result worth detailing (per feedback: "Résultats" only ever showed race results,
 // dropping every dilemma/event outcome even though those affect money/reputation/relations too).

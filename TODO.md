@@ -15,8 +15,156 @@
 
 ## Pilotes & Contrats
 
-- ⏳ **Académies de pilote** : relation avec une académie, mécanique de formation dédiée —
-  fonctionnalité entièrement nouvelle, jamais commencée.
+- ✅ **Corrections issues du beta-test 5 saisons (3 runs)** *(chat, 2026-08-05)* : 3 simulations
+  headless de 260 semaines (`BETA_TEST_REPORT.md`/`_2.md`/`_3.md`), politique disciplinée mais
+  non triviale, ont convergé sur les mêmes schémas récurrents malgré des graines/pilotes
+  totalement différents (potentiel 46 à 88) : renouvellement de contrat qui échoue presque
+  toujours (2/14, 0/49, 0/31 sur les 3 runs), perte du pilote unique suivie de 45 à 155 semaines
+  sans aucun pilote (jusqu'à 60% d'un run), cycle prêt d'urgence/quasi-faillite répété.
+  - **Renouvellement de contrat** (`negotiateContract`, state.js) : la générosité d'un amateur
+    passe d'une moyenne 50/50 salaire/indemnité à une pondération 75% salaire / 25% indemnité —
+    un salaire correct pèse désormais plus qu'une grosse indemnité cash ponctuelle pour faire
+    accepter un renouvellement. Nouveau paramètre `installments` (1-6, défaut 1 = comportement
+    inchangé) : au-delà de 1, seul le premier versement (`transferFee/installments`, arrondi au
+    supérieur) est débité/vérifié à la signature, le reste posé sur
+    `driver.pendingContractInstallment` et prélevé chaque semaine par la nouvelle
+    `payDriverInstallments` (même pattern que `repayLoan`, appelée juste à côté dans
+    `runWeekBody`). La générosité perçue par le pilote reste basée sur le montant TOTAL, pas sur
+    l'étalement — un lissage de trésorerie côté agence, pas un levier de négociation. Champ UI
+    "Étaler sur X versement(s)" ajouté dans `contractNegotiationSection` (agency.js), câblé dans
+    `main.js`. Solde restant affiché sur la fiche pilote (`contractLabel`).
+  - **Reconstruction après effectif à 0** : `signCost` (state.js) applique une remise ×0.5
+    supplémentaire quand `state.drivers.length === 0` — rend n'importe quel prospect scouté
+    nettement plus abordable pour reconstruire, sans créer de pool/candidat spécial.
+    `loanMaxAmount(state)` (state.js, remplace la constante `LOAN_MAX_AMOUNT` utilisée
+    directement dans l'UI) double le plafond d'emprunt (30 000€→60 000€) dans la même situation
+    — même structure de prêt, juste un plafond relevé pour financer une vraie reconstruction. Le
+    dilemme "Tentative de débauchage" (`poaching-attempt`, events.js) réduit sa chance de départ
+    immédiat de 20% à 5% quand c'est le SEUL pilote de l'agence (`state.drivers.length === 1`),
+    en gardant la même part relative (60%) pour la branche "relation en baisse".
+  - **Mise en sommeil du staff** : le débit hebdomadaire des salaires de staff (`runWeekBody`,
+    simulate.js) est réduit de 50% tant que `state.drivers.length === 0` — le staff reste engagé
+    (pas de licenciement forcé) mais coûte deux fois moins cher le temps de reconstruire.
+  - **Bannière proactive** : nouvelle `noDriverBanner` (layout.js), même famille que la bannière
+    de faillite existante (`renderShell`), affichée dès que l'effectif est vide — explique la
+    situation et les deux leviers de reconstruction ci-dessus. Réutilise `.banner-danger`
+    (aucune variante "warning" n'existait dans `style.css`, pas ajoutée pour un seul cas d'usage).
+  - **Piste explorée mais NON retenue** : plafonner plus bas le multiplicateur ×1.6 de la
+    contre-offre de renouvellement (`counterOfferDemandFactor`, state.js) — gardée en mémoire
+    pour un futur ajustement si le reweight 75/25 + l'étalement ne suffisent pas.
+  - **Correction au passage** : la réputation gagnée en fin de saison selon le classement final
+    du championnat (`seasonReputationBonus`/`rolloverIfNeeded`, standings.js, +10/+6/+4/+2/+1
+    selon la position, hors courbe de rendement décroissant) était déjà implémentée avant cette
+    session — n'apparaissait simplement presque jamais dans les 3 runs car les pilotes étaient
+    rarement seated pour une saison complète. Aucune action nécessaire ici.
+  - Vérifié par 2 scripts Node isolés (remise ×0.5 confirmée, `loanMaxAmount` 30k/60k selon
+    effectif, versement initial + `pendingContractInstallment` posé correctement, tick
+    hebdomadaire qui solde l'indemnité sur 3 semaines simulées, taux empirique de départ
+    poaching-attempt 4.85%/20.31% sur 20 000 tirages pour 5%/20% attendus), par
+    `simulate_season.js` (104 semaines, aucun crash, aucun nouvel avertissement), par une
+    ré-exécution courte (130 semaines) de la politique du run 2 sur SA PROPRE graine — 0/49
+    renouvellements devenus 1/1, semaines sans pilote ramenées à 23% de la fenêtre contre plus de
+    60% avant — et en navigateur (bannière affichée sur partie fraîche à effectif 0, champ
+    "Étaler sur" fonctionnel avec débit du premier versement seul et solde qui diminue semaine
+    après semaine sur la fiche pilote, aucune erreur console).
+- ✅ **Négociation à la signature d'un pilote, en fenêtre superposée** *(chat, 2026-08-04)* :
+  "lors du recrutement engager une phase de négociation avec le pilote" + "chaque phase de
+  négociation sera dans une fenêtre qui se met en superposition du jeu". Direction validée :
+  même moteur que la renégociation de contrat (`negotiateContract`). Nouvelle
+  `negotiateSigning` (state.js) — l'ancien prix fixe (`signCost`) devient une simple offre de
+  départ ; probabilité d'acceptation déterministe selon le ratio offre/`signCost`
+  (`generosity`, formule `0.75 + (generosity-1)*1.2`, clamp 5-97%) via `makeRng(state)`, pas de
+  `negotiationPatience` (pas de relation préexistante avec un pur prospect). Un refus renvoie
+  une contre-offre chiffrée que le joueur peut reprendre directement. `signDriver` (instantané,
+  coût fixe) conservé tel quel mais réservé au mode dev (`dev-force-sign`) — toute signature
+  normale passe désormais par la négociation. `finalizeSigning` factorise la logique commune
+  (contrat/scoutPool/roster) entre les deux chemins. Nouvelle `showNegotiationModal`
+  (dialogs.js) — fenêtre modale superposée (pas un panneau inline comme le reste des écrans),
+  reste ouverte sur un refus en affichant le message + la contre-offre pré-remplie pour
+  réessayer sans fermer/rouvrir. Câblée sur l'action `"sign"` existante (main.js) — les 3 points
+  d'entrée UI (Talents, fiche prospect, vivier d'académie) en bénéficient sans changement
+  supplémentaire. Mode dev (`force`) court-circuite entièrement la négociation, comme toutes
+  les autres actions. Vérifié par script Node isolé (offre à 30% du prix quasi toujours
+  refusée avec contre-offre cohérente, offre à 150% acceptée, offre au prix exact ~75% de
+  réussite sur 100 essais, mode force gratuit et instantané) et en navigateur (fenêtre ouverte
+  au clic sur "Signer", refus réel avec contre-offre affichée et pré-remplie, acceptation reelle
+  avec pilote ajouté au roster et trésorerie débitée, aucune erreur console).
+- ✅ **Historique de carrière cohérent pour les recrues déjà expérimentées** *(chat,
+  2026-08-04)* : "pilotes recrutés dans Talents n'est pas forcément leur première saison
+  all time" — un pilote généré au-delà de l'âge de début (16-19 ans, la branche "vétéran
+  libre" 20-33 ans de `refillScoutPool`) démarrait avec `highestTierReached: 0` et
+  `seasonHistory: []` comme n'importe quel débutant. Précision demandée en cours de
+  clarification : cohérence totale, ex. "s'il a roulé chez Nordwind en Karting deux saisons
+  avant son recrutement, il doit apparaître chez Nordwind en Karting deux saisons avant dans
+  les classements". Nouvelle `fabricatePriorCareer` (state.js, câblée dans
+  `pushScoutedProspect`) — pour tout prospect `age > 19` : parcours simplifié
+  karting→F4→F3 (plafonné à F3/tier 2 — un agent libre disponible n'a plausiblement jamais
+  percé au niveau pro), 1-3 saisons fabriquées avec une **vraie équipe existante** tirée de
+  `state.teams` à chaque étape (jamais un nom inventé), niveau/valeur passés cohérents avec
+  leurs stats actuelles (formule inspirée de `driverMarketValue`, projetée en arrière avec une
+  décroissance par année). `highestTierReached` mis à jour en conséquence, donc le pilote est
+  immédiatement proposable au bon palier après signature au lieu de repartir de zéro.
+  **Portée volontairement limitée** (arbitrage coût/valeur assumé, communiqué à l'utilisateur) :
+  seul `driver.seasonHistory` (sa propre fiche) est peuplé — rien n'est injecté dans
+  `state.seasonArchive`, donc ces saisons fabriquées n'apparaissent PAS si on consulte
+  l'archive de classement de cette équipe/catégorie directement dans Monde ▸ Championnats
+  (fabriquer une grille entière d'adversaires plausibles aurait été un chantier disproportionné
+  pour ce qui reste un habillage de fiche). Le clic sur une ligne d'historique fabriquée
+  affiche le message déjà existant "Détail non disponible pour cette saison" (pas de crash, pas
+  de changement nécessaire — ce fallback existait déjà pour les saisons antérieures au suivi
+  manche par manche). Vérifié par script Node isolé (toutes les équipes citées existent
+  réellement dans `state.teams`, seuls les >19 ans ont un historique, saisons en ordre
+  chronologique croissant) et en navigateur (pilote de 22 ans signé en mode dev, table
+  "Historique" affichant 2 saisons Karting cohérentes avec de vraies écuries, colonne
+  "Classement préc." de "Mes pilotes" correctement alimentée par la dernière saison fabriquée),
+  aucune erreur console.
+- ✅ **Le scouting révèle souvent les mêmes super stats** *(chat, 2026-08-04)* : direction
+  validée = garantir la couverture plutôt qu'ajouter de la variance par recruteur.
+  `generateScoutReveal` (scoutReveal.js) réserve désormais un attribut tiré aléatoirement dans
+  CHACUN des 5 groupes `SUPER_STATS` avant de compléter le reste du budget de révélation au
+  hasard parmi les attributs restants — un recruteur faible ne laisse plus un super stat
+  entièrement "?" la plupart du temps. `SCOUT_MIN_REVEAL` remonté de 4 à 5 (cohérence avec les
+  5 super stats à couvrir au minimum). Vérifié par script Node isolé (0 super stat totalement
+  vide sur 500 pilotes avec le recruteur le plus faible possible, contre une majorité de super
+  stats vides avant ce fix).
+- ✅ **Académies de pilote** *(chat, 2026-08-03)* : nouveau fichier `src/game/academies.js` —
+  6 académies générées à la création de partie (`generateAcademies`), 2 par programme phare
+  (F1, WEC Hypercar, WRC — les 3 catégories "marquee" précisées par l'utilisateur), chacune
+  liée à UNE équipe existante distincte tirée aléatoirement (`Académie ${team.name}`). ~15% des
+  jeunes prospects (`age <= 19`) générés en vivier reçoivent un `driver.academyId`
+  (`maybeTagAcademyProspect`, câblé dans `pushScoutedProspect`, `state.js`). Relation
+  agence↔académie (`state.academyRelationships`, défaut 50, clamp 0-200) — même pattern que
+  `agencyTeamRelationship` (team.js) : recruter un prospect affilié coûte un surcoût
+  (`academySignSurchargeFactor`, ×1.0 à ×1.6 selon la relation, branché dans `signCost`,
+  state.js) et fait baisser la relation de -10 à la signature (`onAcademyProspectSigned`) — un
+  vrai débauchage de leur pipeline. Nouvelle action "Financer le programme jeunes" (6 000€,
+  +15 relation, cooldown 6 sem. — leçon tirée de l'exploit "Campagne PR" déjà documenté plus
+  bas, jamais de bonus de relation ré-achetable sans limite). **Objectif de placement** (précisé
+  par l'utilisateur : "leur objectif est de placer leurs jeunes dans leurs programmes phares") :
+  simplifié volontairement pour cette première passe — pas de simulation complète d'un pipeline
+  multi-saisons, juste un tick hebdomadaire (`tickAcademyGraduation`, 1.5%/semaine/prospect
+  affilié non signé) qui retire le prospect du vivier avec un log flavor ("rejoint le programme
+  phare de l'Académie X") s'il n'a pas été recruté à temps — crée la tension "agis avant qu'ils
+  partent" sans construire une vraie mécanique de placement progressif (jugé hors scope pour v1).
+  UI : nouvel onglet "Monde ▸ Académies" (`renderWorldAcademies`, world.js, calqué sur
+  `renderWorldTeams`) listant les 6 académies avec pastille de relation, leurs prospects
+  affiliés et le bouton de financement ; badge 🎓 avec tooltip sur toute carte/ligne de
+  prospect affilié dans Talents (`academyBadge`, agency.js). `SCHEMA_VERSION` 28→29
+  (`state.academies`/`academyRelationships`/`academyFundCooldowns`, nouvel état de premier
+  niveau). Vérifié par script Node isolé (6 académies sur 6 équipes distinctes, ~15.5% de
+  prospects tagués sur 200 tirages, surcoût qui baisse après financement forcé, relation -10
+  exacte à la signature, cooldown qui bloque un second financement, graduation confirmée sur
+  vivier gonflé) et en navigateur (partie fraîche, onglet Académies affiché, jeune affilié
+  scouté puis signé avec prix majoré affiché, relation qui tombe de 50 à 40 après signature,
+  aucune erreur console).
+  - ✅ **Garde-fou talent/âge sur le tag académie** *(chat, 2026-08-04)* : "il n'y a que des
+    jeunes talentueux, un mauvais/vieux pilote ne peut pas être dans une académie ou alors il a
+    beaucoup d'argent". `maybeTagAcademyProspect` ajoute un seuil `potentiel >= 70` en plus de
+    `age <= 19` (chance ~15% inchangée) pour le tag normal, plus une exception rare (~1.5%,
+    `PAY_DRIVER_CHANCE`) qui s'applique à N'IMPORTE QUEL profil (vieux, faible potentiel) —
+    flavor "pilote payant"/famille fortunée, sans modéliser de vraie économie de richesse
+    pilote. Vérifié par script Node isolé sur 20 000 tirages (15.0% chez les jeunes talentueux,
+    1.48% chez les autres, conformes aux taux attendus).
 - ✅ **Super statistiques — remodelage de l'indice de performance** *(chat)* : refonte
   mécanique complète (choisie explicitement par le joueur, pas juste un habillage
   d'affichage). Les 32 attributs bruts (`ATTRIBUTE_META`) restent la couche de génération/
@@ -558,6 +706,38 @@
 
 ## Championnats & Résultats
 
+- ✅ **Nouveaux championnats : MLMC, ELMS, WRC2, Karting KZ1/KZ2** *(chat, 2026-08-03, plan
+  approuvé)* : 5 nouvelles catégories, feeder series sous WEC/WRC/Karting.
+  - **MLMC** (Michelin Le Mans Cup, tier 2, `driversPerCar: 2`) : classes LMP3 (22 équipes),
+    LMP3 Pro/Am (12, `requiresBronze`), GT3 (10, `requiresBronze`).
+  - **ELMS** (European Le Mans Series, tier 2, `driversPerCar: 3`) : classes LMP2 (12), LMP2
+    Pro/Am (12, `requiresBronze`), LMP3 (8, `requiresBronze`), GT3 (10, `requiresBronze`).
+  - **WRC2** (tier 2) : structure identique à WRC (teamSizes, brands, Power Stage).
+  - **Karting KZ1 + KZ2** (tier 0) : structure identique au Karting Senior existant, en
+    parallèle (pas un palier supplémentaire).
+  - **Notion de pilote Bronze** : `driver.isBronze`, tiré aléatoirement à la génération comme
+    `isPro` (~8%, rare par design). Les classes `requiresBronze` (Pro/Am, GT3 de MLMC/ELMS)
+    garantissent au moins un pilote bronze par voiture, forcé sur le dernier siège de la
+    voiture si aucun des sièges précédents n'en a produit un naturellement
+    (`generateAllTeams`, team.js) — **appliqué uniquement à la génération initiale**, pas aux
+    remplacements IA ultérieurs (retraite fin de saison, backfill de baquet) ni côté joueur
+    (`assignSeat` ne cible jamais une voiture précise, contrainte jugée hors scope — voir
+    plan). Badge "🥉 Bronze" sur la fiche pilote (signée, prospect, lecture-seule) et Talents.
+  - **Généralisation architecturale** : le système WEC (`classes`/`driversPerCar`/
+    `carClassification`) était déjà entièrement générique (team.js/simulate.js/standings.js/
+    world.js) — seuls 3 hardcodes `category.id === "wec"/"rally"` ont dû être remplacés par un
+    nouveau champ déclaratif `category.profile` ("endurance"/"rallye"/défaut "circuit"),
+    utilisé par `disciplineKeyFor`/`overallWeightsFor` (driver.js) et `isEndurance`
+    (simulate.js). `GT3_BRANDS` factorisé (partagé WEC/MLMC/ELMS, était dupliqué inline).
+  - Aucun bump `SCHEMA_VERSION` — `CATEGORIES` est une donnée statique, pas de l'état
+    sauvegardé (même précédent que l'ajout des classes hypercar/gt3 de WEC).
+  - Vérifié par script Node isolé (effectifs par classe conformes aux chiffres demandés,
+    invariant "≥1 bronze par voiture" vérifié sur toutes les voitures MLMC/ELMS
+    `requiresBronze`, 3 profils de pondération résolus sans erreur, F3/MLMC/ELMS/WRC2 bien
+    offerts ensemble comme options tier 2 à un pilote promu), par `simulate_season.js`
+    (2 saisons/104 semaines, aucun crash, 0 avertissement) et en navigateur (12 catégories
+    dans les onglets Championnats/Écuries, grille ELMS à 3 pilotes/voiture affichée
+    correctement, badge Bronze visible sur un pilote IA forcé, aucune erreur console).
 - ✅ **Revoir le barème de points par catégorie** *(chat)* : barèmes réalistes par discipline.
   Karting/F4/F3/F2/F1 gardent la base FIA (25-18-15-12-10-8-6-4-2-1, `STANDARD_POINTS_TABLE`,
   `data.js`) sauf karting qui a un barème réduit (top 8, échelon amateur). WEC a désormais un
@@ -915,6 +1095,16 @@
 
 ## Interface & Expérience utilisateur
 
+- ✅ **Trier les catégories dans "Championnats" par type de course** *(chat, 2026-08-03)* :
+  onglets de catégorie (`categoryTabs`, world.js — partagé par Monde ▸ Championnats ET Monde ▸
+  Écuries) regroupés en 4 familles dans l'ordre Karting → Monoplace → Endurance → Rallye
+  (nouveau `CATEGORY_FAMILIES`, world.js — display-only, ne touche pas `data.js`/la logique de
+  jeu). Karting tranché en groupe à part plutôt que rattaché à Monoplace (choix utilisateur).
+  **Ajustement demandé ensuite** : chaque famille sur sa propre ligne, jamais mélangée avec la
+  suivante si les boutons wrappent (`.tab-row` dédié par famille, label + son propre `.tabs`,
+  style.css) — remplace le premier jet où tout tenait dans un seul conteneur flex-wrap global.
+  Vérifié en navigateur (4 lignes distinctes confirmées par `getBoundingClientRect().top` sur
+  les 2 écrans concernés, aucune erreur console) et par `simulate_season.js` (aucun crash).
 - ✅ **4 corrections rapides (bannière, dilemmes, Talents, classement)** *(chat)* : bannière
   défilante des courses à venir corrigée en 2 points — sens gauche→droite (nouveau
   `@keyframes ticker-scroll`, `translateX(-100%)` → `translateX(100vw)`, `style.css`) et
@@ -1017,8 +1207,18 @@
   dernière écurie en fin de saison — vérifié par test isolé (2 courses écurie A + 3 courses
   écurie B = 5 au total, pas 10, aucun double comptage) ; tableau affiché du plus récent au
   plus ancien.
-- ⏳ Tutoriel/parcours guidé en début de partie pour les premières actions (scouting,
-  recrutement, écurie, etc.) *(retour d'un ami)*.
+- ✅ **Tutoriel/parcours guidé en début de partie** *(retour d'un ami, format validé en chat
+  2026-08-03)* : checklist dismissible "Premiers pas" (`tutorialCard`, agency.js) sur l'écran
+  Mes pilotes — 4 étapes (scouter, signer, proposer aux écuries, simuler une semaine) qui se
+  cochent automatiquement au fur et à mesure. Nouveau `state.tutorial` (`{scouted, signed,
+  proposed, simulated, dismissed}`) mis à jour depuis main.js exclusivement (seule couche qui
+  voit le résultat de chaque action à travers state.js/team.js) — jamais depuis les fonctions
+  de jeu elles-mêmes. Bouton "Masquer" (`dismiss-tutorial`) disponible à tout moment, pas besoin
+  d'avoir tout complété ; message "Tout est fait" une fois les 4 étapes cochées.
+  `SCHEMA_VERSION` 29→30 (nouvel état de premier niveau). Vérifié en navigateur (partie
+  fraîche, les 4 étapes cochées une à une dans l'ordre normal de jeu — scout réel, signature
+  via la négociation, proposition aux écuries, semaine simulée — message final affiché,
+  masquage confirmé), aucune erreur console.
 - ✅ **La dernière sauvegarde n'a pas fonctionné** *(chat)* : cause trouvée — `saveGame()`
   retourne déjà `true`/`false` selon le succès (avec retry après purge des sauvegardes
   obsolètes en cas de quota plein), mais **4 des 5 sites d'appel dans `main.js` ignoraient ce
@@ -1048,6 +1248,21 @@
 
 ## Événements & Alertes
 
+- ✅ **Retour au petit popup bas-droite pour les résultats de dilemmes/événements** *(chat,
+  2026-08-04)* : revirement sur la passe précédente ("Popup résultat centrée pour events" —
+  voir plus bas) — le grand modal centré restait réservé aux résultats de COURSE marquants
+  (victoire/podium/abandon, inchangé), mais un résultat de dilemme/événement aléatoire est jugé
+  trop fréquent pour mériter une interruption centrale. Nouvelle `showResultToast` (dialogs.js)
+  réutilise le système de toast existant (coin bas-droit, auto-dismiss) au lieu de
+  `showResultModal` — branché sur le callback de `showEventModal` (résolution d'un choix) et
+  sur les events auto-résolus (`kind: "info"`, `main.js`). `.toast-info` (déjà existant dans
+  style.css) sert de style neutre pour les tons "neutral". Vérifié en navigateur (dilemme forcé
+  via hook temporaire, popup centré disparu, toast bas-droite confirmé par
+  `getBoundingClientRect`), aucune erreur console.
+- ✅ **Icônes pour les 5 nouvelles catégories** *(chat, 2026-08-04)* : `CATEGORY_EMOJI`
+  (data.js) complété (🥐 MLMC, 🇪🇺 ELMS, 🌳 WRC2, 🏎️ Karting KZ1/KZ2, même icône que Karting
+  Senior). Aucun autre changement nécessaire — affiché partout où `categoryLabel`/
+  `CATEGORY_EMOJI` sont déjà consommés. Vérifié en navigateur sur les 5 nouvelles catégories.
 - ✅ **Bannière des courses à venir + alertes dédiées (débauchage/recrutement rival)**
   *(chat, retour d'un ami)* : deux des 5 demandes de cette ligne. Nouvelle bannière défilante
   (`upcomingRacesLine`, `layout.js`) sous `.topbar-phase` — liste les courses des 4 prochaines
@@ -1087,8 +1302,19 @@
     fraîche, simulation de plusieurs semaines via clics "Continuer" réels : popup après un choix
     de dilemme, popup immédiate pour un event auto-résolu, file d'attente confirmée sans
     empilement même avec plusieurs popups déclenchées rapidement), aucune erreur console.
-  - ⏳ Plus de lore/humour dans les textes d'événements — pas fait dans cette passe (écriture de
-    contenu, pas un changement de mécanique/UI).
+  - ✅ **Plus de lore/humour dans les textes d'événements** *(chat, 2026-08-04)* : passe
+    d'écriture pure sur les 35 événements (`events.js` — 9 info + 26 dilemmes), sans toucher à
+    un seul chiffre/effet. Scénarios (`text`) et résultats narratifs (`onSuccess`/`onFailure`)
+    enrichis d'un détail concret ou d'une touche d'humour (ex. "Un avocat en costume sombre te
+    propose une enveloppe généreuse..." pour `driver-lawsuit`, "Un investisseur en costume trop
+    cintré veut entrer dans l'aventure" pour `investor-interest`). `tradeoff`/valeurs numériques
+    strictement inchangés. Exception délibérée : `severe-injury` et `private-crisis` gardent un
+    ton sobre (blessure/deuil), pas de trait d'humour forcé sur un sujet grave.
+    Vérifié : `node -e "import(...)"` confirme l'absence d'erreur de syntaxe, diff limité aux
+    lignes `text`/`title`/retours narratifs (vérifié par grep dédié), `simulate_season.js`
+    identique bit pour bit sur la trajectoire économique (aucun changement de valeur), et en
+    navigateur (4 dilemmes forcés via `Continuer`, nouveaux textes affichés, aucune erreur
+    console).
 - ✅ **Icône + bannière pour les offres exceptionnelles, bannière enrichie (infos + easter-eggs)**
   *(chat)* : "offre exceptionnelle" = l'offre ponctuelle de remplacement (`pendingSubstituteOffer`,
   voir plus haut) — nouvelle icône 🌟 dans la colonne de statut de "Mes pilotes"
@@ -1137,6 +1363,51 @@
   de probabilité attachée au premier effet de sa branche ; valeurs numériques au lieu des
   symboles +/++/---.
 - ✅ Modale de dilemme sans étape de confirmation intermédiaire, résultat via toast.
+
+## Fin de partie / Contenu end-game
+
+- ✅ **Racheter une écurie et devenir manager d'équipe** *(chat, 2026-08-03/04, plan approuvé
+  via EnterPlanMode)* : direction scopée en 3 questions de cadrage (déclencheur, mécaniques,
+  portée), puis implémentée.
+  - **Déclencheur** : réputation ET trésorerie combinées. `teamOwnershipRepRequired(category)`
+    = `category.repRequired + 30` (bonus FLAT, pas un multiplicateur — un multiplicateur ×2.5
+    testé d'abord donnait 200 de réputation requise pour F1, hors de portée vu la courbe à
+    rendements décroissants déjà calibrée pour la réputation ; corrigé avant de livrer).
+    `teamPurchasePrice(team, category)` = `category.seatCost × (5 + prestige/10)` — un karting
+    modeste coûte ~20 000€, un top F1 plusieurs millions.
+  - **3 mécaniques retenues, toutes implémentées** :
+    1. Budget écurie séparé — `team.developmentLevel` (1-5, `MAX_TEAM_DEVELOPMENT_LEVEL`),
+       `upgradeTeamDevelopment` (team.js, même schéma que `upgradeFacility`). Le bonus
+       (`teamDevelopmentScoreBonus`, +3/niveau au-delà du niveau 1) est injecté dans
+       `participantScore` (simulate.js) à côté de `carScore`/`investmentBonus` — s'applique à
+       TOUT pilote de cette écurie, joueur ou IA, exactement comme `team.prestige` le fait déjà.
+    2. Revenus d'écurie — nouveau tick hebdomadaire dans `runWeekBody` (simulate.js), parcourt
+       `state.teams` à plat, une seule transaction `"team-revenue"` par semaine (revenu -
+       entretien net) pour toutes les écuries possédées. `teamWeeklyRevenue` dérivé de
+       `category.prizeScale` (l'unité déjà utilisée pour "combien d'argent circule par course
+       dans cette catégorie") plutôt qu'une échelle inventée.
+    3. Placement gratuit — `teamSeatCost(team, occupant)` retourne `0` immédiatement si
+       `team.ownedByPlayer`, un seul point de sortie qui couvre automatiquement les 3 sites de
+       facturation existants (`assignSeat`/`joinSecondaryChampionship`/`acceptSubstituteOffer`)
+       et l'aperçu `secondarySeatCost` sans les toucher individuellement.
+  - **Portée** : plusieurs écuries rachetables, aucun plafond dur (le prix croissant avec le
+    prestige/tier est déjà un frein économique naturel).
+  - **Aucun bump `SCHEMA_VERSION`** : `ownedByPlayer`/`developmentLevel` vivent directement sur
+    l'objet `team` (déjà dans `state.teams`, déjà persisté intégralement) — même précédent que
+    `team.lastSeasonRank`/`bestPositionThisSeason`, ajoutés après coup sans bump.
+  - UI : bouton "Racheter (X€)" sur chaque carte d'écurie non possédée dans Monde ▸ Écuries
+    (gaté par réputation, même convention que `facilityCard`), badge "Ton écurie" sur celles
+    déjà possédées ; nouvelle section "Mes écuries" dans Investissement (`teamOwnershipCard`,
+    calquée sur `facilityCard` — étoiles, revenu/entretien actuels, bouton "Développer").
+  - Vérifié par script Node isolé (prix/réputation cohérents par tier, `buyTeam` refuse sous
+    les deux seuils et réussit au-dessus, `teamSeatCost` à 0 pour une écurie possédée, bonus de
+    développement qui progresse avec le niveau) et en navigateur (achat réel via le menu
+    Développeur pour débloquer réputation/argent, badge confirmé, section Mes écuries affichée,
+    amélioration réussie niveau 1→2, un pilote signé rejoint l'écurie possédée à "Rejoindre
+    (0€)" avec trésorerie inchangée avant/après, tick hebdomadaire confirmé — transaction
+    `team-revenue` de 69€ - 40€ = 29€ exactement conforme au calcul attendu), aucune erreur
+    console. `simulate_season.js` (2 saisons/104 semaines) : aucun crash, trajectoire
+    identique (aucune écurie possédée dans ce scénario, comme attendu).
 
 ## Outils développeur
 

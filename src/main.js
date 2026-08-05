@@ -14,6 +14,8 @@ import {
   deepScoutRivalDriver,
   deepScoutDriver,
   signDriver,
+  negotiateSigning,
+  signCost,
   negotiateContract,
   setInvestment,
   makeRng,
@@ -34,14 +36,17 @@ import {
   acceptSubstituteOffer,
   devForceTeamContract,
   negotiateTransfer,
+  buyTeam,
+  upgradeTeamDevelopment,
 } from "./game/team.js";
 import { hireStaff, fireStaff } from "./game/staff.js";
 import { signSponsor, terminateSponsor } from "./game/sponsors.js";
+import { fundAcademyProgram } from "./game/academies.js";
 import { upgradeFacility, purchaseShopItem } from "./game/infrastructure.js";
 import { upgradeLifestyle } from "./game/lifestyle.js";
 import { approachDriver } from "./game/recruit.js";
 import { beginWeek, continueWeekAfterChoice } from "./game/simulate.js";
-import { showToast, showConfirm, showEventModal, showSaveBanner, showResultModal } from "./ui/dialogs.js";
+import { showToast, showConfirm, showEventModal, showSaveBanner, showResultModal, showResultToast, showNegotiationModal } from "./ui/dialogs.js";
 
 const COMPARE_MAX = 4;
 const SAVE_FAILED_MESSAGE =
@@ -86,7 +91,7 @@ function showSimulationLogToasts(logEntries) {
     } else if (entry.type === "random-event") {
       // Only auto-resolved (kind: info) events reach here — a choice dilemma's own resolution is
       // already popped up via showEventModal's callback (handleSimulate slices it out below).
-      showResultModal(entry.title, entry.text, entry.tone ?? "neutral");
+      showResultToast(entry.title, entry.text, entry.tone ?? "neutral");
     } else if (entry.type === "player-result") {
       // Only results that actually matter get a popup — every other position still lands in
       // "Résultats" as before, just without an interruption.
@@ -103,6 +108,7 @@ function showSimulationLogToasts(logEntries) {
 }
 
 function handleSimulate() {
+  state.tutorial.simulated = true;
   const occurredWeek = state.week;
   const rng = makeRng(state);
   const result = beginWeek(state, rng);
@@ -211,9 +217,11 @@ app.addEventListener("click", (e) => {
   const force = Boolean(state.ui.devMode);
 
   switch (action) {
-    case "scout":
-      scoutDriver(state, Number(id), { force });
+    case "scout": {
+      const result = scoutDriver(state, Number(id), { force });
+      if (result) state.tutorial.scouted = true;
       break;
+    }
     case "scout-rival": {
       const result = scoutRivalDriver(state, Number(id), { force });
       if (!result.ok) showToast(result.error);
@@ -235,9 +243,30 @@ app.addEventListener("click", (e) => {
       break;
     }
     case "sign": {
-      const result = signDriver(state, Number(id), { force });
-      if (!result.ok) showToast(result.error);
-      break;
+      const driverId = Number(id);
+      if (force) {
+        const result = signDriver(state, driverId, { force: true });
+        if (!result.ok) showToast(result.error);
+        else state.tutorial.signed = true;
+        break;
+      }
+      const prospect = state.scoutPool.find((d) => d.id === driverId);
+      if (!prospect) break;
+      const baseline = signCost(state, prospect);
+      showNegotiationModal(
+        `Négociation — ${prospect.name}`,
+        `Propose un montant pour recruter ${prospect.name}. Une offre trop basse par rapport à sa valeur risque d'être refusée.`,
+        baseline,
+        (offer) => {
+          const result = negotiateSigning(state, driverId, offer, {});
+          if (result.ok) {
+            state.tutorial.signed = true;
+            render();
+          }
+          return result;
+        }
+      );
+      return;
     }
     case "negotiate-contract": {
       const container = target.closest(".negotiate-box");
@@ -245,7 +274,8 @@ app.addEventListener("click", (e) => {
       const transferFee = Number(container?.querySelector('[data-role="negotiate-fee"]')?.value) || 0;
       const commissionRate = (Number(container?.querySelector('[data-role="negotiate-commission"]')?.value) || 0) / 100;
       const seasons = Number(container?.querySelector('[data-role="negotiate-seasons"]')?.value) || 1;
-      const result = negotiateContract(state, Number(id), { weeklyWage, transferFee, commissionRate, seasons }, { force });
+      const installments = Number(container?.querySelector('[data-role="negotiate-installments"]')?.value) || 1;
+      const result = negotiateContract(state, Number(id), { weeklyWage, transferFee, commissionRate, seasons, installments }, { force });
       if (!result.ok) showToast(result.error);
       break;
     }
@@ -296,6 +326,7 @@ app.addEventListener("click", (e) => {
       const budget = budgetInput ? Number(budgetInput.value) || 0 : 0;
       const result = proposeToTeams(state, Number(id), budget, makeRng(state), { force });
       if (!result.ok) showToast(result.error);
+      else state.tutorial.proposed = true;
       break;
     }
     case "join-team": {
@@ -341,6 +372,11 @@ app.addEventListener("click", (e) => {
       });
       return;
     }
+    case "fund-academy": {
+      const result = fundAcademyProgram(state, Number(id), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
     case "scout-staff": {
       const result = scoutStaff(state, Number(id), { force });
       if (!result.ok) showToast(result.error);
@@ -356,6 +392,16 @@ app.addEventListener("click", (e) => {
       break;
     case "upgrade-facility": {
       const result = upgradeFacility(state, id, { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "buy-team": {
+      const result = buyTeam(state, Number(id), { force });
+      if (!result.ok) showToast(result.error);
+      break;
+    }
+    case "upgrade-team-development": {
+      const result = upgradeTeamDevelopment(state, Number(id), { force });
       if (!result.ok) showToast(result.error);
       break;
     }
@@ -529,6 +575,9 @@ app.addEventListener("click", (e) => {
       break;
     case "clear-compare-staff":
       state.ui.compareStaffIds = [];
+      break;
+    case "dismiss-tutorial":
+      state.tutorial.dismissed = true;
       break;
     case "nav":
       if (id === "monde") {

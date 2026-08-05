@@ -11,7 +11,7 @@ import {
   renderCompareDrivers,
   renderCompareStaff,
 } from "./views/agency.js";
-import { renderWorldDrivers, renderWorldChampionships, renderWorldTeams, renderWorldStaff } from "./views/world.js";
+import { renderWorldDrivers, renderWorldChampionships, renderWorldTeams, renderWorldStaff, renderWorldAcademies } from "./views/world.js";
 import { renderPalmares } from "./views/palmares.js";
 import { renderDev } from "./views/dev.js";
 
@@ -31,6 +31,7 @@ const VIEWS = {
   "monde-championnats": renderWorldChampionships,
   "monde-ecuries": renderWorldTeams,
   "monde-staff": renderWorldStaff,
+  "monde-academies": renderWorldAcademies,
   dev: renderDev,
 };
 

@@ -171,13 +171,14 @@ function tryWeeklyActions() {
   if (!driverB && driverA?.teamId) {
     const candidate = state.scoutPool.find((d) => d !== driverA && !d.scouted) ?? state.scoutPool[0];
     const bCost = candidate ? 2500 + 3000 + candidate.potential * 400 : Infinity;
-    if (candidate && state.agency.money < bCost && state.week >= 20 && !testGrantGiven) {
+    if (candidate && state.agency.money < bCost && state.week >= 120 && !testGrantGiven) {
       testGrantGiven = true;
       state.agency.money += 25000;
       log(
         "SUBVENTION DE TEST +25 000€ (affordance de harnais, hors gameplay)",
-        `Fonds propres insuffisants pour un 2e pilote après 20 semaines — injection pour pouvoir tester la chaîne loyauté/dilemme/débauchage · Budget: ${money()}`,
-        "ÉQUILIBRAGE: avec frais amateurs /40 et primes karting faibles, un 2e pilote est infinançable en S1 sur fonds propres — nerf peut-être trop agressif"
+        `Fonds propres insuffisants pour un 2e pilote après 120 semaines (saison 2 largement entamée) — injection pour pouvoir tester la chaîne loyauté/dilemme/débauchage · Budget: ${money()}`
+        // Cible délibérée depuis le nerf /40->/60 : un 2e pilote finançable en saison 2-3, pas en
+        // S1 — ce n'est plus un signal d'alerte tant que ça arrive avant la fin de saison 3 (~semaine 156).
       );
     }
     if (candidate && state.agency.money > bCost) {

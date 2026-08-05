@@ -3,6 +3,10 @@ import { assignDriverTraits, traitStatBonus } from "./traits.js";
 
 let nextId = 1;
 
+// Kept rare so a bronze-rated driver stays a genuinely scarce commodity for PRO/AM seat
+// requirements, not something every roster has a spare of.
+const BRONZE_CHANCE = 0.08;
+
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
@@ -109,6 +113,10 @@ export function generateDriver(rng, { minAge = 16, maxAge = 19, scoutSkill = 0 }
     scouted: false,
     scoutReveal: null,
     isPro: false,
+    // Rare "Bronze" driver rating (endurance Pro-Am convention — MLMC/ELMS PRO/AM & GT3
+    // classes require at least one bronze crewmate per car, see team.js/data.js). Fixed at
+    // generation like isPro, never recalculated.
+    isBronze: rng() < BRONZE_CHANCE,
     attributes,
     potential: Math.round(potential),
     // Never revealed anywhere (not even deep scouting) — see rollGrowthCeiling above.
@@ -181,10 +189,7 @@ export function getDriverById(state, id) {
 }
 
 function disciplineKeyFor(category) {
-  if (!category) return "circuit";
-  if (category.id === "rally") return "rallye";
-  if (category.id === "wec") return "endurance";
-  return "circuit";
+  return category?.profile ?? "circuit";
 }
 
 export function groupAverage(driver, group) {
@@ -255,10 +260,7 @@ const OVERALL_WEIGHTS_BY_PROFILE = {
 };
 
 function overallWeightsFor(category) {
-  if (!category) return OVERALL_WEIGHTS_BY_PROFILE.circuit;
-  if (category.id === "rally") return OVERALL_WEIGHTS_BY_PROFILE.rallye;
-  if (category.id === "wec") return OVERALL_WEIGHTS_BY_PROFILE.endurance;
-  return OVERALL_WEIGHTS_BY_PROFILE.circuit;
+  return OVERALL_WEIGHTS_BY_PROFILE[category?.profile] ?? OVERALL_WEIGHTS_BY_PROFILE.circuit;
 }
 
 export function overallRating(driver) {

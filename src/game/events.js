@@ -6,6 +6,7 @@ import { applyReputationGain, CATEGORY_BY_ID } from "./data.js";
 import { findTeamById } from "./team.js";
 import { driverMarketValue } from "./driverStats.js";
 import { effectiveScoutSkills } from "./infrastructure.js";
+import { overallRating } from "./driver.js";
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -19,7 +20,10 @@ export const SEVERE_INJURY_WEEKS_UNTREATED = 12;
 export const LIGHT_INJURY_WORSEN_WEEKS = 3;
 
 // Magnitude scales for event impacts — s (+), m (++), l (+++), xl (++++).
-const MONEY = { s: 3000, m: 8000, l: 20000 };
+// Halved from 3000/8000/20000 — a simulated 10-season run showed dilemma money dwarfing race
+// prizes 5-10x every season (the dominant income source by far, not the racing itself), which
+// is the real driver behind the game feeling too easy/rich by mid-game.
+const MONEY = { s: 1500, m: 4000, l: 10000 };
 const RELATION = { s: 6, m: 12, l: 22 };
 // Réputation reste volontairement peu mobile via les dilemmes : +/-1 pour le palier
 // s (+/-), +/-2 pour le palier m (++/--).
@@ -44,10 +48,19 @@ function addForm(driver, delta) {
   driver.form = clamp((driver.form ?? 50) + delta, 0, 100);
 }
 // Overall is a weighted average of attributes, so shifting every attribute by delta moves
-// the driver's Pace/Consistency/Potential rating by ~delta points.
+// the driver's Pace/Consistency/Potential rating by ~delta points. A positive delta is capped
+// by driver.growthCeiling (same cap growDriver respects) so a dilemma can never push a driver
+// past the growth ceiling rolled at generation — only growDriver's own room-based curve, or an
+// explicit growthCeiling bump (push-driver), may do that.
 function adjustOverall(driver, delta) {
+  let applied = delta;
+  if (applied > 0) {
+    const room = (driver.growthCeiling ?? driver.potential ?? 99) - overallRating(driver);
+    applied = Math.max(0, Math.min(applied, room));
+  }
+  if (applied === 0) return;
   for (const key of Object.keys(driver.attributes)) {
-    driver.attributes[key] = clamp(driver.attributes[key] + delta, 0, 99);
+    driver.attributes[key] = clamp(driver.attributes[key] + applied, 0, 99);
   }
 }
 function pickDriver(state, rng, filter = () => true) {
@@ -69,7 +82,7 @@ const INFO_EVENTS = [
       const amount = Math.round(2000 + rng() * 6000 + state.agency.reputation * 40);
       state.agency.money += amount;
       recordTransaction(state, "random-event", "Sponsor ponctuel", amount);
-      return { tone: "good", title: "Sponsor ponctuel", text: `Un sponsor ponctuel soutient l'agence : +${amount.toLocaleString("fr-FR")}€.` };
+      return { tone: "good", title: "Sponsor ponctuel", text: `Un fabricant de boissons énergisantes cherche un coup de pub rapide et choisit ton agence : +${amount.toLocaleString("fr-FR")}€.` };
     },
   },
   {
@@ -80,7 +93,7 @@ const INFO_EVENTS = [
       const amount = Math.round(1000 + rng() * 4000);
       state.agency.money -= amount;
       recordTransaction(state, "random-event", "Frais imprévus", -amount);
-      return { tone: "bad", title: "Frais imprévus", text: `Déplacement, matériel : -${amount.toLocaleString("fr-FR")}€.` };
+      return { tone: "bad", title: "Frais imprévus", text: `Entre un camion-atelier parti dans le mauvais sens et du matériel qui rend l'âme au pire moment, les frais s'accumulent : -${amount.toLocaleString("fr-FR")}€.` };
     },
   },
   {
@@ -90,7 +103,7 @@ const INFO_EVENTS = [
     run: (state, rng) => {
       const delta = 1 + Math.floor(rng() * 2);
       addReputation(state, delta);
-      return { tone: "good", title: "Buzz médiatique", text: `Bon coup médiatique pour l'agence : réputation +${delta}.` };
+      return { tone: "good", title: "Buzz médiatique", text: `Une interview bien sentie fait le tour des réseaux du paddock : réputation +${delta}.` };
     },
   },
   {
@@ -100,7 +113,7 @@ const INFO_EVENTS = [
     run: (state, rng) => {
       const delta = Math.min(state.agency.reputation, 1 + Math.floor(rng() * 3));
       state.agency.reputation -= delta;
-      return { tone: "bad", title: "Bourde de communication", text: `Réputation -${delta}.` };
+      return { tone: "bad", title: "Bourde de communication", text: `Un communiqué mal relu, une phrase sortie de son contexte, et voilà la bourde du jour : réputation -${delta}.` };
     },
   },
   {
@@ -110,7 +123,7 @@ const INFO_EVENTS = [
     run: (state, rng) => {
       const driver = state.drivers[Math.floor(rng() * state.drivers.length)];
       driver.agencyRelationship = clamp(driver.agencyRelationship + 8, 0, 200);
-      return { tone: "good", title: "Relation renforcée", driverName: driver.name, text: `${driver.name} apprécie particulièrement le suivi de l'agence (relation +8).` };
+      return { tone: "good", title: "Relation renforcée", driverName: driver.name, text: `${driver.name} passe te remercier en personne pour le suivi de ces dernières semaines (relation +8).` };
     },
   },
   {
@@ -120,7 +133,7 @@ const INFO_EVENTS = [
     run: (state, rng) => {
       const driver = state.drivers[Math.floor(rng() * state.drivers.length)];
       driver.agencyRelationship = clamp(driver.agencyRelationship - 6, 0, 200);
-      return { tone: "bad", title: "Tension", driverName: driver.name, text: `${driver.name} traverse une phase de doute vis-à-vis de l'agence (relation -6).` };
+      return { tone: "bad", title: "Tension", driverName: driver.name, text: `${driver.name} rumine dans son coin — un appel resté sans réponse, sans doute (relation -6).` };
     },
   },
   {
@@ -131,7 +144,7 @@ const INFO_EVENTS = [
       const amount = Math.round(8000 + rng() * 12000);
       state.agency.money += amount;
       recordTransaction(state, "random-event", "Investisseur intéressé", amount);
-      return { tone: "good", title: "Investisseur intéressé", text: `Un investisseur voit du potentiel dans l'agence : +${amount.toLocaleString("fr-FR")}€.` };
+      return { tone: "good", title: "Investisseur intéressé", text: `Un investisseur en costume trop cintré veut "entrer dans l'aventure" : +${amount.toLocaleString("fr-FR")}€.` };
     },
   },
   {
@@ -144,7 +157,7 @@ const INFO_EVENTS = [
       driver.scouted = true;
       const { discovery, precision } = effectiveScoutSkills(state);
       driver.scoutReveal = generateScoutReveal(rng, discovery, precision);
-      return { tone: "good", title: "Tuyau de recruteur", text: `Un tuyau permet de scouter gratuitement ${driver.name}.` };
+      return { tone: "good", title: "Tuyau de recruteur", text: `Un ancien recruteur, une bière à la main, te glisse tout ce qu'il sait sur ${driver.name} — scouté gratuitement.` };
     },
   },
   {
@@ -156,7 +169,7 @@ const INFO_EVENTS = [
       const driver = pickDriver(state, rng);
       const amount = MONEY.m + Math.round(rng() * MONEY.s);
       gainMoney(state, amount, `Sponsor personnel — ${driver.name}`);
-      return { tone: "good", title: "Contrat de sponsoring personnel", driverName: driver.name, text: `${driver.name} décroche un sponsor personnel : +${amount.toLocaleString("fr-FR")}€.` };
+      return { tone: "good", title: "Contrat de sponsoring personnel", driverName: driver.name, text: `${driver.name} négocie lui-même un partenariat avec une marque de casques : +${amount.toLocaleString("fr-FR")}€.` };
     },
   },
 ];
@@ -172,7 +185,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Programme d'entraînement intensif",
-        text: `${driver.name} veut suivre un programme d'entraînement intensif avant la prochaine échéance.`,
+        text: `${driver.name} débarque motivé à bloc avec un programme d'entraînement "extrême" trouvé sur internet, à suivre avant la prochaine échéance.`,
         options: [
           {
             label: "Autoriser",
@@ -186,19 +199,19 @@ const CHOICE_EVENTS = [
               const cap = driver.growthCeiling >= 94 ? 99 : 93;
               driver.growthCeiling = Math.min(cap, driver.growthCeiling + 2);
               driver.agencyRelationship = clamp(driver.agencyRelationship + 4, 0, 200);
-              return `${driver.name} progresse bien, son potentiel de développement augmente.`;
+              return `${driver.name} en ressort méthodiquement plus solide, presque une nouvelle version de lui-même.`;
             },
             onFailure: (state, rng, driver) => {
               driver.injuryWeeksRemaining = INJURY_WEEKS;
               driver.agencyRelationship = clamp(driver.agencyRelationship - 6, 0, 200);
-              return `${driver.name} se blesse à l'entraînement — indisponible ${INJURY_WEEKS} semaines.`;
+              return `Trop, c'est trop : ${driver.name} se blesse à l'entraînement — indisponible ${INJURY_WEEKS} semaines.`;
             },
           },
           {
             label: "Refuser, rester prudent",
             tradeoff: "Aucun risque, aucun gain",
             successChance: 1,
-            onSuccess: (state, rng, driver) => `${driver.name} continue son programme habituel.`,
+            onSuccess: (state, rng, driver) => `${driver.name} continue sagement son programme habituel — moins spectaculaire, mais personne ne se casse rien.`,
           },
         ],
       };
@@ -210,7 +223,7 @@ const CHOICE_EVENTS = [
     condition: (state) => state.agency.reputation >= 5,
     describe: () => ({
       title: "Sponsor exigeant",
-      text: "Un sponsor propose un contrat ponctuel à conditions strictes.",
+      text: "Un sponsor propose un contrat ponctuel, mais avec une liste de conditions longue comme le bras — logo en évidence, interviews imposées, charte graphique au pixel près.",
       options: [
         {
           label: "Accepter",
@@ -220,19 +233,19 @@ const CHOICE_EVENTS = [
             const amount = Math.round(6000 + rng() * 8000);
             state.agency.money += amount;
             recordTransaction(state, "random-event", "Sponsor exigeant", amount);
-            return `Le sponsor est satisfait : +${amount.toLocaleString("fr-FR")}€.`;
+            return `Le sponsor est ravi du résultat : +${amount.toLocaleString("fr-FR")}€.`;
           },
           onFailure: (state, rng) => {
             const loss = Math.min(state.agency.reputation, 1 + Math.floor(rng() * 4));
             addReputation(state, -loss);
-            return `Le partenariat tourne mal : réputation -${loss}.`;
+            return `Une clause mal respectée, et le partenariat tourne au vinaigre : réputation -${loss}.`;
           },
         },
         {
           label: "Décliner",
           tradeoff: "Aucun risque, aucun gain",
           successChance: 1,
-          onSuccess: () => "L'agence décline poliment l'offre.",
+          onSuccess: () => "Tu refuses — la paperasse à elle seule valait le déclin.",
         },
       ],
     }),
@@ -247,7 +260,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Invitation média exclusive",
-        text: `${driver.name} est invité à un événement média avant la course.`,
+        text: `${driver.name} reçoit une invitation dorée pour un événement média la veille de la course — cocktails, photographes, petits-fours.`,
         options: [
           {
             label: "Jouer la carte médiatique à fond",
@@ -256,11 +269,11 @@ const CHOICE_EVENTS = [
             onSuccess: (state, rng, driver) => {
               addReputation(state, 3);
               driver.agencyRelationship = clamp(driver.agencyRelationship + 3, 0, 200);
-              return `L'événement se passe bien : réputation +3, relation agence +3.`;
+              return `La soirée est un succès, ${driver.name} rayonne devant les caméras : réputation +3, relation agence +3.`;
             },
             onFailure: (state, rng, driver) => {
               driver.injuryWeeksRemaining = 1;
-              return `${driver.name} revient épuisé de l'événement — indisponible 1 semaine.`;
+              return `Entre les petits-fours et les mondanités qui s'éternisent, ${driver.name} revient sur les rotules — indisponible 1 semaine.`;
             },
           },
           {
@@ -269,14 +282,14 @@ const CHOICE_EVENTS = [
             successChance: 1,
             onSuccess: (state) => {
               addReputation(state, 1);
-              return "Présence discrète : réputation +1, aucun risque pris.";
+              return "Présence discrète, quelques poignées de main : réputation +1, aucun risque pris.";
             },
           },
           {
             label: "Décliner l'invitation",
             tradeoff: "Aucun effet",
             successChance: 1,
-            onSuccess: () => "L'agence décline poliment l'invitation.",
+            onSuccess: () => "Tu déclines poliment — dormir avant la course, c'est aussi ça, le métier.",
           },
         ],
       };
@@ -292,7 +305,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Négociation salariale",
-        text: `${driver.name} demande une revalorisation de son contrat.`,
+        text: `${driver.name} débarque dans ton bureau, dossier sous le bras, pour réclamer une revalorisation de son contrat.`,
         options: [
           {
             label: "Accepter la demande",
@@ -302,7 +315,7 @@ const CHOICE_EVENTS = [
               state.agency.money -= 4000;
               recordTransaction(state, "random-event", `Revalorisation — ${driver.name}`, -4000);
               driver.agencyRelationship = clamp(driver.agencyRelationship + 8, 0, 200);
-              return `${driver.name} est satisfait : relation agence +8, -4 000€.`;
+              return `${driver.name} repart avec le sourire : relation agence +8, -4 000€.`;
             },
           },
           {
@@ -319,7 +332,7 @@ const CHOICE_EVENTS = [
               state.agency.money -= 1500;
               recordTransaction(state, "random-event", `Compromis salarial — ${driver.name}`, -1500);
               driver.agencyRelationship = clamp(driver.agencyRelationship - 2, 0, 200);
-              return `${driver.name} juge le compromis insuffisant : relation agence -2, -1 500€.`;
+              return `${driver.name} fait la moue, pas convaincu par le compromis : relation agence -2, -1 500€.`;
             },
           },
           {
@@ -328,7 +341,7 @@ const CHOICE_EVENTS = [
             successChance: 1,
             onSuccess: (state, rng, driver) => {
               driver.agencyRelationship = clamp(driver.agencyRelationship - 6, 0, 200);
-              return `${driver.name} est déçu : relation agence -6.`;
+              return `${driver.name} claque presque la porte en sortant : relation agence -6.`;
             },
           },
         ],
@@ -346,7 +359,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Dilemme : approche d'une agence rivale",
-        text: `Sans écurie depuis plusieurs semaines, ${driver.name} est directement approché par une agence rivale.`,
+        text: `Sans écurie depuis plusieurs semaines, ${driver.name} reçoit un appel d'une agence rivale qui promet monts et merveilles.`,
         options: [
           {
             label: "Le rassurer personnellement",
@@ -356,14 +369,14 @@ const CHOICE_EVENTS = [
               state.agency.money -= 2000;
               recordTransaction(state, "random-event", `Fidélisation — ${driver.name}`, -2000);
               driver.agencyRelationship = clamp(driver.agencyRelationship + 15, 0, 200);
-              return `${driver.name} se sent écouté et reste fidèle à l'agence.`;
+              return `Un café, une vraie conversation, et ${driver.name} se sent enfin écouté — reste fidèle à l'agence.`;
             },
           },
           {
             label: "Ne rien faire",
             tradeoff: "Aucun coût, risque de départ inchangé",
             successChance: 1,
-            onSuccess: (state, rng, driver) => `L'agence ne réagit pas — ${driver.name} reste livré à lui-même.`,
+            onSuccess: (state, rng, driver) => `Silence radio côté agence — ${driver.name} reste livré à lui-même face aux sirènes rivales.`,
           },
         ],
       };
@@ -379,19 +392,19 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Troubles psychologiques",
-        text: `${driver.name} a du mal à se concentrer ces derniers temps.`,
+        text: `${driver.name} a la tête ailleurs depuis quelques semaines — les tours de qualification n'ont plus la même saveur.`,
         options: [
           {
             label: "Faire appel à un psychologue",
             tradeoff: `-${MONEY.s.toLocaleString("fr-FR")}€, relation agence +${RELATION.s}`,
             successChance: 1,
-            onSuccess: (s, r, d) => { gainMoney(s, -MONEY.s, `Suivi psychologique — ${d.name}`); addRelation(d, RELATION.s); return `${d.name} retrouve sa sérénité grâce au suivi.`; },
+            onSuccess: (s, r, d) => { gainMoney(s, -MONEY.s, `Suivi psychologique — ${d.name}`); addRelation(d, RELATION.s); return `Quelques séances plus tard, ${d.name} retrouve sa sérénité et sa concentration.`; },
           },
           {
             label: "Ne rien faire",
             tradeoff: `Niveau -${OVERALL.s}`,
             successChance: 1,
-            onSuccess: (s, r, d) => { adjustOverall(d, -OVERALL.s); return `Sans accompagnement, ${d.name} régresse légèrement.`; },
+            onSuccess: (s, r, d) => { adjustOverall(d, -OVERALL.s); return `Livré à lui-même, ${d.name} rumine et régresse légèrement.`; },
           },
         ],
       };
@@ -407,16 +420,16 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Méforme",
-        text: `${driver.name} est en méforme depuis plusieurs semaines.`,
+        text: `${driver.name} enchaîne les week-ends sans éclat — la mécanique est bonne, la tête un peu moins.`,
         options: [
           {
             label: "Le recadrer",
             tradeoff: `60% : forme +${FORM.s} · 40% : relation agence -${RELATION.s}`,
             successChance: 0.6,
             onSuccess: (s, r, d) => { addForm(d, FORM.s); return `${d.name} se reprend en main : forme en hausse.`; },
-            onFailure: (s, r, d) => { addRelation(d, -RELATION.s); return `${d.name} prend mal la remarque : relation agence en baisse.`; },
+            onFailure: (s, r, d) => { addRelation(d, -RELATION.s); return `${d.name} prend la remarque de travers : relation agence en baisse.`; },
           },
-          { label: "Ne rien faire", tradeoff: "Aucun effet", successChance: 1, onSuccess: (s, r, d) => `Tu laisses passer l'orage.` },
+          { label: "Ne rien faire", tradeoff: "Aucun effet", successChance: 1, onSuccess: (s, r, d) => `Tu laisses passer l'orage, en espérant que ça se tasse tout seul.` },
         ],
       };
     },
@@ -428,10 +441,10 @@ const CHOICE_EVENTS = [
     condition: () => true,
     describe: () => ({
       title: "Procès d'un pilote célèbre",
-      text: "On te propose un pot-de-vin pour témoigner contre un club.",
+      text: "Un avocat en costume sombre te propose une enveloppe généreuse pour témoigner contre un club rival dans une affaire trouble.",
       options: [
-        { label: "Pourquoi pas", tradeoff: `+${MONEY.m.toLocaleString("fr-FR")}€`, successChance: 1,
-          onSuccess: (state) => { gainMoney(state, MONEY.m, "Témoignage rémunéré"); return `L'argent est encaissé, discrètement.`; } },
+        { label: "Pourquoi pas", tradeoff: `+${MONEY.m.toLocaleString("fr-FR")}€, réputation -${REP.s}`, successChance: 1,
+          onSuccess: (state) => { gainMoney(state, MONEY.m, "Témoignage rémunéré"); addReputation(state, -REP.s); return `L'enveloppe change de mains dans un parking désert — mais la rumeur finit par courir : réputation -${REP.s}.`; } },
         { label: "Ce ne sont pas mes affaires", tradeoff: `Réputation +${REP.s}`, successChance: 1,
           onSuccess: (state) => { addReputation(state, REP.s); return `Ton intégrité est remarquée : réputation en hausse.`; } },
       ],
@@ -444,13 +457,13 @@ const CHOICE_EVENTS = [
     condition: () => true,
     describe: () => ({
       title: "Offre de documentaire",
-      text: "Un studio veut réaliser un documentaire sur ton agence.",
+      text: "Une équipe de tournage débarque avec l'idée d'un documentaire façon \"coulisses\" sur ton agence — drones, micros-cravates, tout l'attirail.",
       options: [
-        { label: "Accepter", tradeoff: `+${MONEY.m.toLocaleString("fr-FR")}€`, successChance: 1,
-          onSuccess: (state) => { gainMoney(state, MONEY.m, "Documentaire"); return `Le cachet du documentaire est versé.`; } },
+        { label: "Accepter", tradeoff: `+${MONEY.m.toLocaleString("fr-FR")}€, réputation -${REP.s}`, successChance: 1,
+          onSuccess: (state) => { gainMoney(state, MONEY.m, "Documentaire"); addReputation(state, -REP.s); return `Le cachet du documentaire est versé — mais le montage expose aussi les coulisses moins reluisantes : réputation -${REP.s}.`; } },
         { label: "Décliner", tradeoff: `50% : réputation +${REP.s}`, successChance: 0.5,
           onSuccess: (state) => { addReputation(state, REP.s); return `Ton refus discret séduit le milieu : réputation +${REP.s}.`; },
-          onFailure: () => `Le studio va voir ailleurs, sans conséquence.` },
+          onFailure: () => `Le studio hausse les épaules et va filmer une agence rivale à la place.` },
       ],
     }),
   },
@@ -464,10 +477,10 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Préparateur personnel",
-        text: `${driver.name} peut s'attacher les services d'un préparateur personnel.`,
+        text: `Un préparateur physique réputé, ancien d'une écurie de F1, propose ses services à ${driver.name}.`,
         options: [
           { label: "L'engager", tradeoff: `-${MONEY.m.toLocaleString("fr-FR")}€, niveau +${OVERALL.m}`, successChance: 1,
-            onSuccess: (s, r, d) => { gainMoney(s, -MONEY.m, `Préparateur — ${d.name}`); adjustOverall(d, OVERALL.m); return `${d.name} progresse nettement.`; } },
+            onSuccess: (s, r, d) => { gainMoney(s, -MONEY.m, `Préparateur — ${d.name}`); adjustOverall(d, OVERALL.m); return `Programme sur-mesure, résultats immédiats : ${d.name} progresse nettement.`; } },
           { label: "Ne rien faire", tradeoff: `Relation agence -${RELATION.s}`, successChance: 1,
             onSuccess: (s, r, d) => { addRelation(d, -RELATION.s); return `${d.name} est déçu du manque d'investissement.`; } },
         ],
@@ -484,7 +497,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Retard à l'entraînement",
-        text: `${driver.name} fait la grasse matinée et arrive en retard.`,
+        text: `${driver.name} débarque à l'entraînement une bonne heure en retard, café à la main, l'air à peine désolé.`,
         options: [
           { label: "Le recadrer", tradeoff: `57% : niveau +${OVERALL.s} · 43% : niveau -${OVERALL.s}`, successChance: 0.57,
             onSuccess: (s, r, d) => { adjustOverall(d, OVERALL.s); return `${d.name} se ressaisit et travaille mieux.`; },
@@ -505,7 +518,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Stage d'équipe spécial",
-        text: `L'écurie invite ${driver.name} à un stage, mais l'agence doit régler la note.`,
+        text: `L'écurie organise un stage intensif en altitude et y invite ${driver.name} — la facture, elle, atterrit chez toi.`,
         options: [
           { label: "Payer le stage", tradeoff: `-${MONEY.s.toLocaleString("fr-FR")}€, niveau +${OVERALL.s}, relation équipe +${RELATION.s}`, successChance: 1,
             onSuccess: (s, r, d) => { gainMoney(s, -MONEY.s, `Stage d'équipe — ${d.name}`); adjustOverall(d, OVERALL.s); addTeamRelation(d, RELATION.s); return `${d.name} revient affûté et soudé à l'écurie.`; } },
@@ -525,7 +538,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Cours de langue",
-        text: `${driver.name} gagnerait à suivre des cours de langue pour les médias internationaux.`,
+        text: `${driver.name} bafouille en interview d'après-course face aux médias internationaux — des cours de langue lui feraient le plus grand bien.`,
         options: [
           { label: "L'inscrire", tradeoff: `-${MONEY.s.toLocaleString("fr-FR")}€, niveau +${OVERALL.s}`, successChance: 1,
             onSuccess: (s, r, d) => { gainMoney(s, -MONEY.s, `Cours de langue — ${d.name}`); adjustOverall(d, OVERALL.s); return `${d.name} s'ouvre à l'international.`; } },
@@ -545,7 +558,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Post polémique sur les réseaux",
-        text: `${driver.name} publie un message controversé qui fait du bruit.`,
+        text: `${driver.name} publie un message maladroit à 2h du matin — les captures d'écran circulent déjà.`,
         options: [
           { label: "Engager une agence de com", tradeoff: `-${MONEY.m.toLocaleString("fr-FR")}€, réputation +${REP.s}, relation agence +${RELATION.s}`, successChance: 1,
             onSuccess: (s, r, d) => { gainMoney(s, -MONEY.m, `Gestion de crise — ${d.name}`); addReputation(s, REP.s); addRelation(d, RELATION.s); return `La crise est désamorcée avec brio.`; } },
@@ -562,10 +575,10 @@ const CHOICE_EVENTS = [
     condition: () => true,
     describe: () => ({
       title: "Sponsor controversé",
-      text: "Une marque sulfureuse propose un pont d'or.",
+      text: "Une marque à la réputation sulfureuse — le genre qu'on évite de citer à table — propose un pont d'or pour un partenariat.",
       options: [
-        { label: "Accepter", tradeoff: `+${MONEY.l.toLocaleString("fr-FR")}€, réputation -${REP.s}`, successChance: 1,
-          onSuccess: (state) => { gainMoney(state, MONEY.l, "Sponsor controversé"); addReputation(state, -REP.s); return `Le chèque est énorme, l'image en pâtit un peu.`; } },
+        { label: "Accepter", tradeoff: `+${MONEY.m.toLocaleString("fr-FR")}€, réputation -${REP.s}`, successChance: 1,
+          onSuccess: (state) => { gainMoney(state, MONEY.m, "Sponsor controversé"); addReputation(state, -REP.s); return `Le chèque est confortable, l'image en pâtit un peu.`; } },
         { label: "Refuser", tradeoff: `30% : réputation -${REP.s}`, successChance: 0.7,
           onSuccess: () => `Tu refuses proprement, sans vagues.`,
           onFailure: (state) => { addReputation(state, -REP.s); return `La marque se venge dans la presse : réputation -${REP.s}.`; } },
@@ -579,18 +592,24 @@ const CHOICE_EVENTS = [
     condition: hasDriver,
     describe: (state, rng) => {
       const driver = pickDriver(state, rng);
+      // Losing your only driver here has no other consequence than the dilemme itself — for the
+      // rest of the roster, a bad roll just costs one seat among several. Cut the instant-departure
+      // odds when it would end the agency's whole active roster.
+      const isOnlyDriver = state.drivers.length === 1;
+      const departChance = isOnlyDriver ? 0.05 : 0.2;
+      const departPercent = Math.round(departChance * 100);
       return {
         driverId: driver.id,
         title: "Tentative de débauchage",
-        text: `Une agence rivale fait les yeux doux à ${driver.name}.`,
+        text: `Une agence rivale multiplie les attentions envers ${driver.name} — dîners, promesses, petits cadeaux.`,
         options: [
           { label: "Verser une prime de fidélité", tradeoff: `-${MONEY.s.toLocaleString("fr-FR")}€, relation agence +${RELATION.s}`, successChance: 1,
             onSuccess: (s, r, d) => { gainMoney(s, -MONEY.s, `Prime de fidélité — ${d.name}`); addRelation(d, RELATION.s); return `${d.name} est touché par le geste et reste.`; } },
-          { label: "Refuser", tradeoff: `60% : relation -${RELATION.m} · 20% : départ immédiat`, successChance: 1,
+          { label: "Refuser", tradeoff: `60% : relation -${RELATION.m} · ${departPercent}% : départ immédiat`, successChance: 1,
             onSuccess: (state, rng, driver) => {
               const roll = rng();
-              if (roll < 0.2) { poachDriverAway(state, driver, rng); return `${driver.name} claque la porte et rejoint l'agence rivale sur-le-champ !`; }
-              if (roll < 0.8) { addRelation(driver, -RELATION.m); return `${driver.name} est vexé de ne pas être retenu : relation en forte baisse.`; }
+              if (roll < departChance) { poachDriverAway(state, driver, rng); return `${driver.name} claque la porte et rejoint l'agence rivale sur-le-champ !`; }
+              if (roll < departChance + 0.6) { addRelation(driver, -RELATION.m); return `${driver.name} est vexé de ne pas être retenu : relation en forte baisse.`; }
               return `${driver.name} reste finalement, sans rancune notable.`;
             } },
         ],
@@ -620,7 +639,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Offre de transfert",
-        text: `${newTeam.name} souhaite recruter ${driver.name}, actuellement chez ${currentTeam.name}. Es-tu intéressé par une vente ?`,
+        text: `${newTeam.name} tape à la porte pour ${driver.name}, aujourd'hui chez ${currentTeam.name}. Une vente t'intéresse-t-elle ?`,
         options: [
           {
             label: "Ouvrir les négociations",
@@ -652,12 +671,12 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Grosse performance",
-        text: `${driver.name} a signé un week-end exceptionnel.`,
+        text: `${driver.name} vient de signer un week-end de rêve — pole, victoire, et une interview d'après-course qui restera dans les mémoires.`,
         options: [
-          { label: "Le féliciter", tradeoff: `Relation agence +${RELATION.m} · 30% : niveau +${OVERALL.s}`, successChance: 0.3,
+          { label: "Le féliciter publiquement", tradeoff: `70% : niveau +${OVERALL.s}, relation +${RELATION.m} · 30% : trop sûr de lui, niveau -${OVERALL.s}`, successChance: 0.7,
             onSuccess: (s, r, d) => { adjustOverall(d, OVERALL.s); addRelation(d, RELATION.m); return `${d.name} surfe sur la confiance : niveau +${OVERALL.s} et relation +${RELATION.m}.`; },
-            onFailure: (s, r, d) => { addRelation(d, RELATION.m); return `${d.name} apprécie la reconnaissance : relation +${RELATION.m}.`; } },
-          { label: "Ne rien dire", tradeoff: "Aucun effet", successChance: 1, onSuccess: (s, r, d) => `Tu restes concentré sur la suite.` },
+            onFailure: (s, r, d) => { adjustOverall(d, -OVERALL.s); return `${d.name} prend la grosse tête et se relâche : niveau -${OVERALL.s}.`; } },
+          { label: "Reconnaissance discrète", tradeoff: `Relation +${RELATION.s}, sans risque`, successChance: 1, onSuccess: (s, r, d) => { addRelation(d, RELATION.s); return `${d.name} apprécie la reconnaissance mesurée : relation +${RELATION.s}.`; } },
         ],
       };
     },
@@ -669,12 +688,12 @@ const CHOICE_EVENTS = [
     condition: () => true,
     describe: () => ({
       title: "Tuyau d'investissement",
-      text: "Un ami te souffle un placement « sûr ».",
+      text: "Un ami d'enfance, reconverti trader du dimanche, te jure connaître LE placement infaillible du moment.",
       options: [
         { label: "Investir", tradeoff: `57% : +${MONEY.m.toLocaleString("fr-FR")}€ · 43% : -${MONEY.s.toLocaleString("fr-FR")}€`, successChance: 0.57,
           onSuccess: (state) => { gainMoney(state, MONEY.m, "Placement gagnant"); return `Le placement rapporte gros !`; },
           onFailure: (state) => { gainMoney(state, -MONEY.s, "Placement perdant"); return `Le tuyau était crevé : perte sèche.`; } },
-        { label: "Non merci", tradeoff: "Aucun effet", successChance: 1, onSuccess: () => `Tu passes ton tour.` },
+        { label: "Non merci", tradeoff: "Aucun effet", successChance: 1, onSuccess: () => `Tu passes ton tour — l'amitié a ses limites.` },
       ],
     }),
   },
@@ -705,7 +724,7 @@ const CHOICE_EVENTS = [
     condition: () => true,
     describe: () => ({
       title: "Demande d'une fondation caritative",
-      text: "Une fondation sollicite le soutien de l'agence.",
+      text: "Une fondation caritative locale sollicite le soutien de l'agence pour sa prochaine collecte.",
       options: [
         { label: "Les aider", tradeoff: `-${MONEY.s.toLocaleString("fr-FR")}€, 60% : réputation +${REP.m}`, successChance: 0.6,
           onSuccess: (state) => { gainMoney(state, -MONEY.s, "Don caritatif"); addReputation(state, REP.m); return `Ton don est largement relayé : réputation +${REP.m}.`; },
@@ -721,7 +740,7 @@ const CHOICE_EVENTS = [
     condition: () => true,
     describe: () => ({
       title: "Optimisation fiscale douteuse",
-      text: "Ton comptable propose un montage à la limite de la légalité.",
+      text: "Ton comptable, un sourire un peu trop confiant aux lèvres, propose un montage \"optimisé\" à la limite de la légalité.",
       options: [
         { label: "Continuer l'évasion", tradeoff: `+${MONEY.m.toLocaleString("fr-FR")}€, réputation -${REP.s}`, successChance: 1,
           onSuccess: (state) => { gainMoney(state, MONEY.m, "Montage fiscal"); addReputation(state, -REP.s); return `Les caisses se remplissent... à tes risques.`; } },
@@ -740,13 +759,13 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Demande de dopage",
-        text: `${driver.name} veut recourir à des produits dopants.`,
+        text: `${driver.name} évoque, mine de rien, des "compléments" qu'un ami masseur lui aurait recommandés.`,
         options: [
           { label: "Fermer les yeux", tradeoff: `40% : niveau +${OVERALL.s} · 60% : niveau -${OVERALL.s}`, successChance: 0.4,
             onSuccess: (s, r, d) => { adjustOverall(d, OVERALL.s); return `Les gains sont réels... pour l'instant.`; },
             onFailure: (s, r, d) => { adjustOverall(d, -OVERALL.s); return `Les effets secondaires plombent ${d.name}.`; } },
-          { label: "Le sermonner fermement", tradeoff: `Relation agence -${RELATION.l}`, successChance: 1,
-            onSuccess: (s, r, d) => { addRelation(d, -RELATION.l); return `${d.name} prend très mal ce recadrage : relation en chute libre.`; } },
+          { label: "Le sermonner fermement", tradeoff: `Relation agence -${RELATION.m}, réputation +${REP.s}`, successChance: 1,
+            onSuccess: (s, r, d) => { addRelation(d, -RELATION.m); addReputation(s, REP.s); return `${d.name} prend mal ce recadrage, mais ton intégrité est reconnue : relation -${RELATION.m}, réputation +${REP.s}.`; } },
         ],
       };
     },
@@ -761,7 +780,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Paparazzi au bar",
-        text: `${driver.name} est surpris à boire tard dans la nuit.`,
+        text: `Un paparazzi surprend ${driver.name} dans un bar, verre à la main, bien après le couvre-feu officieux d'avant-course.`,
         options: [
           { label: "Soudoyer le photographe", tradeoff: `-${MONEY.s.toLocaleString("fr-FR")}€`, successChance: 1,
             onSuccess: (s, r, d) => { gainMoney(s, -MONEY.s, `Étouffer un scandale — ${d.name}`); return `Les clichés ne sortiront jamais.`; } },
@@ -781,7 +800,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Blessure grave",
-        text: `${driver.name} est victime d'une blessure sérieuse.`,
+        text: `${driver.name} est victime d'une lourde sortie de piste — la blessure est sérieuse.`,
         options: [
           { label: "Payer un traitement de pointe", tradeoff: `-${MONEY.s.toLocaleString("fr-FR")}€, niveau -${OVERALL.m}, absent ${SEVERE_INJURY_WEEKS} sem`, successChance: 1,
             onSuccess: (s, r, d) => { gainMoney(s, -MONEY.s, `Traitement — ${d.name}`); adjustOverall(d, -OVERALL.m); d.injuryWeeksRemaining = SEVERE_INJURY_WEEKS; return `${d.name} sera indisponible ${SEVERE_INJURY_WEEKS} semaines mais bien soigné.`; } },
@@ -821,7 +840,7 @@ const CHOICE_EVENTS = [
       return {
         driverId: driver.id,
         title: "Blessure légère, veut courir",
-        text: `${driver.name} est légèrement blessé mais veut absolument courir.`,
+        text: `Poignet bandé, ${driver.name} insiste pour prendre le départ malgré la légère blessure.`,
         options: [
           { label: "Le laisser courir", tradeoff: "50% : forme au max · 50% : aggravation, 3 sem d'absence", successChance: 0.5,
             onSuccess: (s, r, d) => { d.form = 100; return `${d.name} se transcende : forme au maximum !`; },

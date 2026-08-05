@@ -1,5 +1,5 @@
-import { CATEGORIES, RIVAL_AGENCIES, AGENCY_SPECIALTIES, SEASON_WEEKS, weekInSeason, isMercatoWindow } from "./data.js";
-import { generateDriver } from "./driver.js";
+import { CATEGORIES, CATEGORY_BY_ID, RIVAL_AGENCIES, AGENCY_SPECIALTIES, SEASON_WEEKS, weekInSeason, isMercatoWindow } from "./data.js";
+import { generateDriver, overallRating } from "./driver.js";
 import { generateAllTeams, benchDriver } from "./team.js";
 import { driverMarketValue } from "./driverStats.js";
 import {
@@ -16,6 +16,7 @@ import { recordTransaction } from "./finance.js";
 import { mulberry32 } from "./rng.js";
 import { generateScoutReveal, generateStaffScoutReveal, shuffledRevealKeys, randomWidth, SCOUT_REVEAL_KEYS } from "./scoutReveal.js";
 import { refillSponsorPool } from "./sponsors.js";
+import { generateAcademies, maybeTagAcademyProspect, academySignSurchargeFactor, onAcademyProspectSigned } from "./academies.js";
 
 const SAVE_PREFIX = "pit-wall-save-";
 const LAST_SLOT_KEY = "pit-wall-last-slot";
@@ -23,7 +24,7 @@ const DEEP_SCOUT_COOLDOWN_WEEKS = 2;
 const SIGN_BASE_COST = 3000;
 const SCOUT_SEARCH_WEEKS = 3;
 let nextSearchId = 1;
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 30;
 
 export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#ff3b30", seed = Date.now() | 0, specialtyId = null) {
   const rng = mulberry32(seed);
@@ -47,6 +48,9 @@ export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#
     activeSponsor: null,
     investments: {},
     agencyTeamRelationships: {},
+    academies: [],
+    academyRelationships: {},
+    academyFundCooldowns: {},
     shopCooldowns: {},
     seasonRepBonusApplied: {},
     scoutSearches: [],
@@ -60,10 +64,16 @@ export function createNewGame(slotId, agencyName = "Nouvelle Agence", color = "#
     purchasedUpgrades: [],
     deepScoutCooldownWeeks: 0,
     eventCooldowns: {},
+    // Dismissible "Premiers pas" checklist (Mes pilotes) — each flag flips true the first time
+    // the player performs that action (set from main.js, the only layer that sees every
+    // action's result), never reset. dismissed lets the player hide it permanently even before
+    // completing every step.
+    tutorial: { scouted: false, signed: false, proposed: false, simulated: false, dismissed: false },
     ui: { activeMenu: "mes-pilotes", mondeExpanded: false, focusedCategoryId: CATEGORIES[0].id, viewingDriverId: null },
   };
   const specialty = AGENCY_SPECIALTIES.find((s) => s.id === specialtyId);
   if (specialty?.facilityId) state.infrastructure[specialty.facilityId] = 2;
+  state.academies = generateAcademies(rng, teams);
   seedWorldStaff(state, rng);
   refillStaffPool(state, rng);
   refillScoutPool(state, rng);
@@ -83,11 +93,71 @@ function rollPotentialAlreadyKnown(rng, recruiterQualityLevel, scoutSkill) {
   return rng() < chance;
 }
 
+// A free-agent prospect above debut age (refillScoutPool's occasional 20-33 roll) shouldn't
+// read as if this is their first-ever season — they've plausibly already raced somewhere.
+// Backdated seasons walk a simple monoplace ladder (karting→F4→F3, capped at F3/tier 2 — a
+// free agent nobody's kept on staff plausibly never broke into the pro tiers above that),
+// each one using a REAL existing team from that category so the team name is never invented,
+// only the fact that this driver used to be on its roster. Scoped deliberately: this backfills
+// driver.seasonHistory (their own fiche) and highestTierReached (so they're offered the right
+// tier immediately) — it does NOT touch state.seasonArchive, so the fabricated seasons won't
+// appear if you browse that team/category's archived standings directly (that would require
+// fabricating an entire plausible grid of opponents, not just one driver's own row).
+const CAREER_LADDER = ["karting", "f4", "f3"];
+const CAREER_START_AGE = 16;
+
+function fabricatePriorCareer(state, rng, driver) {
+  if (driver.age <= 19) return;
+  const finalTierIndex = clamp(Math.floor((driver.age - 18) / 5), 0, CAREER_LADDER.length - 1);
+  const maxPlausibleSeasons = clamp(driver.age - CAREER_START_AGE, 1, 6);
+  const seasonCount = Math.min(maxPlausibleSeasons, 1 + Math.floor(rng() * 3));
+  const startTierIndex = Math.max(0, finalTierIndex - (seasonCount - 1));
+
+  driver.highestTierReached = Math.max(driver.highestTierReached ?? 0, finalTierIndex);
+
+  const seasons = [];
+  for (let i = 0; i < seasonCount; i++) {
+    const tierIndex = Math.min(finalTierIndex, startTierIndex + i);
+    const categoryId = CAREER_LADDER[tierIndex];
+    const category = CATEGORY_BY_ID[categoryId];
+    const teams = state.teams[categoryId] ?? [];
+    if (teams.length === 0) continue;
+    const team = teams[Math.floor(rng() * teams.length)];
+    const gridSize = category.gridSize ?? 20;
+    const position = 1 + Math.floor(rng() * gridSize);
+    const races = category.roundCount;
+    const wins = position <= 3 ? Math.round(rng() * 2) : 0;
+    const podiums = position <= 10 ? wins + Math.round(rng() * 2) : 0;
+
+    const yearsAgo = seasonCount - i;
+    const pastAge = driver.age - yearsAgo;
+    const pastRating = clamp(Math.round(overallRating(driver) - yearsAgo * (3 + rng() * 4)), 20, 90);
+    const ageFactor = pastAge <= 23 ? 1.3 : pastAge <= 28 ? 1.1 : pastAge <= 32 ? 0.9 : 0.6;
+    const value = Math.round((pastRating * 500 + driver.potential * 300) * ageFactor);
+
+    seasons.push({
+      seasonNumber: -yearsAgo,
+      categoryId,
+      classId: null,
+      teamName: team.name,
+      rating: pastRating,
+      value,
+      races,
+      wins,
+      podiums,
+      championshipPosition: position,
+    });
+  }
+  driver.seasonHistory = seasons;
+}
+
 function pushScoutedProspect(state, rng, discovery, qualityFloor, recruiterQualityLevel, ageRange = {}) {
   const driver = generateDriver(rng, { scoutSkill: discovery + qualityFloor, ...ageRange });
   if (rollPotentialAlreadyKnown(rng, recruiterQualityLevel, averageScoutSkill(state))) {
     driver.scoutReveal = { attributeWidths: {}, potentialKnown: true, priceKnown: false, traitsKnown: false };
   }
+  maybeTagAcademyProspect(state, rng, driver);
+  fabricatePriorCareer(state, rng, driver);
   state.scoutPool.push(driver);
   state.newTalentsThisWeek = (state.newTalentsThisWeek ?? 0) + 1;
 }
@@ -372,9 +442,15 @@ export function deepScoutStaff(state, staffId, { force = false } = {}) {
   return { ok: true };
 }
 
+// An agency with zero drivers has no income and no other lever to recruit again
+// (negotiateSigning still requires money >= offer) — a steep discount here is the actual
+// recovery path, symmetrical to takeLoan's own reconstruction exception below.
+const RECONSTRUCTION_DISCOUNT_FACTOR = 0.5;
+
 export function signCost(state, driver) {
   const base = SIGN_BASE_COST + driver.potential * 400 + (driver.scouted ? 0 : 1500);
-  return Math.round(base * (1 - negotiationDiscount(state)));
+  const reconstructionFactor = state.drivers.length === 0 ? RECONSTRUCTION_DISCOUNT_FACTOR : 1;
+  return Math.round(base * (1 - negotiationDiscount(state)) * academySignSurchargeFactor(state, driver) * reconstructionFactor);
 }
 
 // Pre-signature display range around the real signCost — mirrors how attribute stats are
@@ -388,6 +464,37 @@ export function signCostRange(state, driver) {
   return { low, high };
 }
 
+// Shared by signDriver (instant/dev-force path) and negotiateSigning (the real negotiated
+// path) — moves the prospect from scoutPool to drivers and sets up their first agency
+// contract, whatever the agreed price ended up being (0 for a forced/free signing).
+// /60 (nerfé depuis /40 sur demande explicite — cible : 2e pilote finançable en saison 2-3,
+// pas en une demi-saison) : les frais de gestion amateurs seuls ne suffisent plus à
+// rentabiliser une signature rapidement, les primes de course/dilemmes restent le principal
+// moteur pour un pilote performant.
+// A fresh signing starts with one season's worth of agency-contract duration (in weeks — see
+// negotiateContract). categoryId stays null until they actually land a seat (assignSeat), so
+// the UI doesn't claim they're competing somewhere before they've ever raced;
+// listJoinableTeams/nextCategories already treat a null categoryId as "start from tier 0" —
+// unless fabricatePriorCareer already raised highestTierReached, in which case they start from
+// wherever their backstory left off instead.
+function finalizeSigning(state, idx, cost) {
+  const driver = state.scoutPool[idx];
+  if (cost) {
+    state.agency.money -= cost;
+    recordTransaction(state, "sign-driver", `Signature — ${driver.name}`, -cost);
+  }
+  driver.contract = { weeksRemaining: SEASON_WEEKS, weeklyWage: Math.round(cost / 60), commissionRate: officeCommissionRate(state) };
+  driver.categoryId = null;
+  driver.teamId = null;
+  driver.weeksWithoutContract = 0;
+  state.scoutPool.splice(idx, 1);
+  state.drivers.push(driver);
+  onAcademyProspectSigned(state, driver);
+  return { ok: true, driver };
+}
+
+// Instant, flat-cost signing — kept for the dev-mode force path only (dev-force-sign, main.js).
+// A real player action now goes through negotiateSigning instead (see below).
 export function signDriver(state, driverId, { force = false } = {}) {
   const idx = state.scoutPool.findIndex((d) => d.id === driverId);
   if (idx === -1) return { ok: false, error: "Pilote introuvable." };
@@ -397,24 +504,39 @@ export function signDriver(state, driverId, { force = false } = {}) {
   const driver = state.scoutPool[idx];
   const cost = force ? 0 : signCost(state, driver);
   if (!force && state.agency.money < cost) return { ok: false, error: "Budget insuffisant." };
+  return finalizeSigning(state, idx, cost);
+}
 
-  if (cost) {
-    state.agency.money -= cost;
-    recordTransaction(state, "sign-driver", `Signature — ${driver.name}`, -cost);
+// Negotiated signing — the offer is a real proposal, not a fixed price: too far below signCost
+// and the prospect turns it down (with a counter-offer suggestion the player can act on),
+// comfortably at or above it and acceptance is close to certain. Deterministic acceptance
+// curve like negotiateContract (state.js), not a fixed threshold, using the same makeRng(state)
+// convention rather than requiring the caller to thread an rng through.
+export function negotiateSigning(state, driverId, offer, { force = false } = {}) {
+  const idx = state.scoutPool.findIndex((d) => d.id === driverId);
+  if (idx === -1) return { ok: false, error: "Pilote introuvable." };
+  if (!force && state.drivers.length >= rosterCapacity(state)) {
+    return { ok: false, error: "Effectif complet — améliore tes bureaux pour recruter davantage." };
   }
-  // /40 : les frais de gestion amateurs rentabilisent la signature en ~2 saisons, pas en une demi-saison.
-  // A fresh signing starts with one season's worth of agency-contract duration (in weeks —
-  // see negotiateContract). categoryId stays null until they actually land a seat
-  // (assignSeat), so the UI doesn't claim they're competing somewhere before they've ever
-  // raced; listJoinableTeams/nextCategories already treat a null categoryId as "start from
-  // tier 0" for matchmaking purposes.
-  driver.contract = { weeksRemaining: SEASON_WEEKS, weeklyWage: Math.round(cost / 40), commissionRate: officeCommissionRate(state) };
-  driver.categoryId = null;
-  driver.teamId = null;
-  driver.weeksWithoutContract = 0;
-  state.scoutPool.splice(idx, 1);
-  state.drivers.push(driver);
-  return { ok: true, driver };
+  if (force) return finalizeSigning(state, idx, 0);
+
+  const driver = state.scoutPool[idx];
+  const baseline = signCost(state, driver);
+  offer = Math.max(0, Math.round(offer ?? baseline));
+  if (state.agency.money < offer) return { ok: false, error: "Budget insuffisant pour cette offre." };
+
+  const generosity = offer / Math.max(1, baseline);
+  const acceptChance = clamp(0.75 + (generosity - 1) * 1.2, 0.05, 0.97);
+  const rng = makeRng(state);
+  if (rng() >= acceptChance) {
+    const counterOffer = Math.round((baseline * clamp(1 + (1 - generosity) * 0.6, 1, 1.8)) / 100) * 100;
+    return {
+      ok: false,
+      error: `${driver.name} juge cette offre insuffisante — ${driver.sex === "F" ? "elle" : "il"} demanderait plutôt ${counterOffer.toLocaleString("fr-FR")}€.`,
+      counterOffer,
+    };
+  }
+  return finalizeSigning(state, idx, offer);
 }
 
 // Dev-only cheats, gated behind state.ui.devMode in the UI — deliberately bypass every
@@ -493,13 +615,15 @@ function buildCounterOffer(driver, baseline) {
 // (indépendante des courses disputées — voir simulate.js), avec patience et engagement
 // pluriannuel. Distinct du baquet écurie, qui expire désormais à la fin de saison
 // (rolloverIfNeeded, standings.js), pas ici.
-export function negotiateContract(state, driverId, { weeklyWage, transferFee, commissionRate, seasons = 1 }, { force = false } = {}) {
+export function negotiateContract(state, driverId, { weeklyWage, transferFee, commissionRate, seasons = 1, installments = 1 }, { force = false } = {}) {
   const driver = state.drivers.find((d) => d.id === driverId);
   if (!driver) return { ok: false, error: "Pilote introuvable." };
   seasons = clamp(Math.round(seasons) || 1, 1, 5);
   const baseline = contractBaseline(state, driver);
+  const installmentCount = force ? 1 : clamp(Math.round(installments) || 1, 1, 6);
 
   let generosity;
+  let firstPayment = 0;
   transferFee = force ? 0 : Math.max(0, Math.round(transferFee ?? 0));
   if (driver.isPro) {
     // Un taux de commission plus BAS est plus généreux pour le pilote (il garde plus de ses gains).
@@ -507,15 +631,20 @@ export function negotiateContract(state, driverId, { weeklyWage, transferFee, co
     generosity = baseline.commissionRate / Math.max(0.01, commissionRate);
   } else {
     weeklyWage = Math.max(0, Math.round(weeklyWage ?? 0));
-    if (!force && state.agency.money < transferFee) {
+    firstPayment = Math.ceil(transferFee / installmentCount);
+    if (!force && state.agency.money < firstPayment) {
       return {
         ok: false,
-        error: `Indemnité de transfert (${transferFee.toLocaleString("fr-FR")}€) supérieure à ta trésorerie (${state.agency.money.toLocaleString("fr-FR")}€) — elle est payée cash à la signature, baisse le montant.`,
+        error: `${installmentCount > 1 ? `Premier versement (${firstPayment.toLocaleString("fr-FR")}€)` : `Indemnité de transfert (${transferFee.toLocaleString("fr-FR")}€)`} supérieur à ta trésorerie (${state.agency.money.toLocaleString("fr-FR")}€) — étale-la sur plus de versements ou baisse le montant.`,
       };
     }
-    // Un amateur PAIE des frais de gestion à l'agence (moins = généreux) — inverse d'un pro.
+    // Un amateur PAIE des frais de gestion à l'agence (moins = généreux) — inverse d'un pro. La
+    // générosité perçue reste basée sur le montant TOTAL de l'indemnité, pas sur son étalement —
+    // étaler est un lissage de trésorerie côté agence, pas un levier de négociation. Le poids de
+    // l'indemnité est réduit (0.25 contre 0.75 au salaire) : un renouvellement ne devrait pas
+    // dépendre d'un gros paiement cash ponctuel autant que d'un salaire correct dans la durée.
     const wageGenerosity = baseline.weeklyWage / Math.max(1, weeklyWage);
-    generosity = (wageGenerosity + transferFee / Math.max(1, baseline.transferFee)) / 2;
+    generosity = wageGenerosity * 0.75 + (transferFee / Math.max(1, baseline.transferFee)) * 0.25;
   }
 
   const commitmentBonus = (seasons - 1) * 0.04;
@@ -545,8 +674,10 @@ export function negotiateContract(state, driverId, { weeklyWage, transferFee, co
     // Garde-fou anti-exploit : les frais perçus sur un amateur sont plafonnés à 2× la base.
     const storedWage = Math.min(weeklyWage, baseline.weeklyWage * 2);
     if (transferFee) {
-      state.agency.money -= transferFee;
-      recordTransaction(state, "renew-contract", `Renouvellement — ${driver.name}`, -transferFee);
+      state.agency.money -= firstPayment;
+      recordTransaction(state, "renew-contract", `Renouvellement — ${driver.name}`, -firstPayment);
+      const remaining = transferFee - firstPayment;
+      driver.pendingContractInstallment = remaining > 0 ? { remaining, weeklyPayment: firstPayment } : null;
     }
     driver.contract = { weeksRemaining, weeklyWage: Math.round(storedWage), commissionRate: 0 };
   }
@@ -555,6 +686,23 @@ export function negotiateContract(state, driverId, { weeklyWage, transferFee, co
   driver.negotiationCounterOffer = null;
   driver.agencyRelationship = clamp(driver.agencyRelationship + Math.round((generosity - 1) * 10), 0, 200);
   return { ok: true };
+}
+
+// Weekly tick for a renewal indemnity spread over several payments (negotiateContract's
+// installments option) — same shape/pattern as the agency-wide loan (repayLoan below), just
+// scoped to one driver's pendingContractInstallment instead of state.agency.loan. A driver who
+// leaves the agency (release/poach) simply stops appearing in state.drivers, so there is nothing
+// extra to clean up here.
+export function payDriverInstallments(state) {
+  for (const driver of state.drivers) {
+    const installment = driver.pendingContractInstallment;
+    if (!installment) continue;
+    const payment = Math.min(installment.weeklyPayment, installment.remaining);
+    state.agency.money -= payment;
+    recordTransaction(state, "contract-installment", `Versement — ${driver.name}`, -payment);
+    installment.remaining -= payment;
+    if (installment.remaining <= 0) driver.pendingContractInstallment = null;
+  }
 }
 
 const RELEASE_COST_RATE = 0.15;
@@ -586,6 +734,10 @@ export function setInvestment(state, driverId, amount) {
 // treasury is already critical, and never stackable, so it can't become a free-money exploit.
 export const LOAN_ELIGIBLE_THRESHOLD = 10000;
 export const LOAN_MAX_AMOUNT = 30000;
+// A driverless agency has no other way back into the game (negotiateSigning still needs
+// money >= offer, even at the reconstruction discount above) — a higher ceiling here funds an
+// actual rebuild rather than a single low-cost driver.
+const LOAN_RECONSTRUCTION_MAX_AMOUNT = 60000;
 const LOAN_INTEREST_RATE = 0.25;
 // Durations offered to the player, in months — converted to weeks (the unit the simulation
 // actually runs on) via the average month length (52/12), not a flat 4-week approximation.
@@ -594,6 +746,10 @@ const LOAN_DEFAULT_MONTHS = 12;
 
 export function loanWeeksForMonths(months) {
   return Math.max(1, Math.round(months * (52 / 12)));
+}
+
+export function loanMaxAmount(state) {
+  return state.drivers.length === 0 ? LOAN_RECONSTRUCTION_MAX_AMOUNT : LOAN_MAX_AMOUNT;
 }
 
 export function takeLoan(state, amount, months, { force = false } = {}) {
@@ -606,7 +762,7 @@ export function takeLoan(state, amount, months, { force = false } = {}) {
       error: `Prêt réservé aux agences en difficulté (trésorerie sous ${LOAN_ELIGIBLE_THRESHOLD.toLocaleString("fr-FR")}€).`,
     };
   }
-  amount = Math.round(clamp(amount, 0, LOAN_MAX_AMOUNT));
+  amount = Math.round(clamp(amount, 0, loanMaxAmount(state)));
   if (amount <= 0) return { ok: false, error: "Montant invalide." };
   if (!force && !LOAN_DURATION_MONTHS_OPTIONS.includes(months)) {
     return { ok: false, error: "Durée de remboursement invalide." };

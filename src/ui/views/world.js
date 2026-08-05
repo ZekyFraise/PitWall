@@ -6,7 +6,20 @@ import { ROLES } from "../../game/staff.js";
 import { staffScoutCost, staffDeepScoutCost } from "../../game/state.js";
 import { POINTS_TABLE } from "../../game/standings.js";
 import { STAFF_TRAITS, staffTraitTooltip } from "../../game/traits.js";
-import { agencyTeamRelationship, AGENCY_TEAM_RELATIONSHIP_DEFAULT } from "../../game/team.js";
+import {
+  agencyTeamRelationship,
+  AGENCY_TEAM_RELATIONSHIP_DEFAULT,
+  teamPurchasePrice,
+  teamOwnershipRepRequired,
+} from "../../game/team.js";
+import {
+  academyRelationship,
+  ACADEMY_RELATIONSHIP_DEFAULT,
+  academyFlagshipLabel,
+  academyFundCooldown,
+  FUND_ACADEMY_COST,
+} from "../../game/academies.js";
+import { signCost, signCostRange } from "../../game/state.js";
 
 const STAFF_ROLE_CATEGORY = {
   recruiter: "Sportif",
@@ -36,11 +49,32 @@ function focusedCategory(state) {
   return CATEGORY_BY_ID[state.ui.focusedCategoryId ?? CATEGORIES[0].id];
 }
 
+// Display-only grouping for the category tabs — not used by any game logic (unlike
+// category.profile, which drives super-stat weighting). Karting kept as its own family rather
+// than folded into "Monoplace": a real distinct discipline, not just a lower rung of it.
+const CATEGORY_FAMILIES = [
+  { label: "Karting", ids: ["karting", "kartingKz1", "kartingKz2"] },
+  { label: "Monoplace", ids: ["f4", "f3", "f2", "f1"] },
+  { label: "Endurance", ids: ["wec", "mlmc", "elms"] },
+  { label: "Rallye", ids: ["rally", "wrc2"] },
+];
+
+// Each family gets its own row (never sharing a line with another family, and never wrapping
+// its own buttons into a line that starts with the next family's label) — returns the full
+// block including the ".tabs" wrapper per row, so callers embed this directly with no extra
+// wrapping div of their own.
 function categoryTabs(state) {
   const focused = state.ui.focusedCategoryId ?? CATEGORIES[0].id;
-  return CATEGORIES.map(
-    (c) => `<button class="tab ${c.id === focused ? "active" : ""}" data-action="focus-category" data-id="${c.id}">${c.name}</button>`
-  ).join("");
+  return CATEGORY_FAMILIES.map(({ label, ids }) => {
+    const tabs = ids
+      .map((id) => CATEGORY_BY_ID[id])
+      .filter(Boolean)
+      .map((c) => `<button class="tab ${c.id === focused ? "active" : ""}" data-action="focus-category" data-id="${c.id}">${c.name}</button>`)
+      .join("");
+    return tabs
+      ? `<div class="tab-row"><span class="tab-group-label">${label}</span><div class="tabs">${tabs}</div></div>`
+      : "";
+  }).join("");
 }
 
 function statusTag(state, driver) {
@@ -331,7 +365,7 @@ export function renderWorldChampionships(state) {
 
   return `
     <h2>Monde — Championnats</h2>
-    <div class="tabs">${categoryTabs(state)}</div>
+    ${categoryTabs(state)}
     ${seasonSelectHtml(state, category)}
     ${body}
   `;
@@ -440,6 +474,18 @@ function agencyRelationPill(state, teamId) {
   return `<span class="pill ${relationColorClass(value)}" title="Relation entre l'agence et cette écurie — plus elle est élevée, plus l'écurie accepte facilement vos pilotes.">Relation agence : ${Math.round(value)}</span>`;
 }
 
+// End-game team ownership — badge for an already-owned team, or a gated "Racheter" button
+// otherwise (disabled with the missing threshold shown, same convention as facilityCard).
+function teamOwnershipCell(state, team, category) {
+  if (team.ownedByPlayer) return `<span class="pill accent">Ton écurie</span>`;
+  const repRequired = teamOwnershipRepRequired(category);
+  const price = teamPurchasePrice(team, category);
+  if (state.agency.reputation < repRequired) {
+    return `<button class="secondary small" disabled>Réputation insuffisante (${repRequired})</button>`;
+  }
+  return `<button data-action="buy-team" data-id="${team.id}" class="small">Racheter (${price.toLocaleString("fr-FR")}€)</button>`;
+}
+
 export function renderWorldTeams(state) {
   const category = focusedCategory(state);
   const teams = [...(state.teams[category.id] ?? [])].sort((a, b) => b.prestige - a.prestige);
@@ -493,14 +539,71 @@ export function renderWorldTeams(state) {
             ${agencyRelationPill(state, team.id)}
           </div>
           ${occupants}
+          <div class="card-actions">${teamOwnershipCell(state, team, category)}</div>
         </div>`;
     })
     .join("");
 
   return `
     <h2>Monde — Écuries</h2>
-    <div class="tabs">${categoryTabs(state)}</div>
+    ${categoryTabs(state)}
     <div class="card-grid">${cards || `<p class="muted">Aucune écurie dans cette catégorie.</p>`}</div>`;
+}
+
+function academyRelationColorClass(value) {
+  if (value >= 140) return "rel-good";
+  if (value >= 80) return "rel-mid";
+  return "rel-bad";
+}
+
+function academyProspectPriceLabel(state, driver) {
+  if (!driver.scouted) return "Prix inconnu";
+  if (driver.scoutReveal?.priceKnown) return `${signCost(state, driver).toLocaleString("fr-FR")}€`;
+  const { low, high } = signCostRange(state, driver);
+  return `${low.toLocaleString("fr-FR")}–${high.toLocaleString("fr-FR")}€`;
+}
+
+export function renderWorldAcademies(state) {
+  const academies = state.academies ?? [];
+  const cards = academies
+    .map((academy) => {
+      const relation = academyRelationship(state, academy.id);
+      const prospects = state.scoutPool.filter((d) => d.academyId === academy.id);
+      const cooldown = academyFundCooldown(state, academy.id);
+      const prospectRows = prospects
+        .map(
+          (driver) => `
+          <div class="roster-line">
+            ${driver.name} ${driverIdTag(driver)} — ${driver.age} ans
+            <button data-action="scout" data-id="${driver.id}" class="small secondary" ${driver.scouted ? "disabled" : ""}>${driver.scouted ? "Scouté" : "Scouter"}</button>
+            <button data-action="sign" data-id="${driver.id}" class="small">Signer (${academyProspectPriceLabel(state, driver)})</button>
+          </div>`
+        )
+        .join("");
+      return `
+        <div class="card">
+          <div class="card-head">
+            <strong>${academy.name}</strong>
+            <span class="pill">Programme phare : ${academyFlagshipLabel(academy)} — ${academy.teamName}</span>
+            <span class="pill ${academyRelationColorClass(relation)}" title="Relation avec cette académie — plus elle est élevée, moins cher revient le recrutement d'un de leurs jeunes.">Relation : ${Math.round(relation)}</span>
+          </div>
+          <div class="muted">${prospects.length} jeune(s) actuellement dans leur vivier.</div>
+          ${prospectRows || `<div class="muted">Aucun jeune actuellement affilié dans le vivier.</div>`}
+          <div class="card-actions">
+            <button data-action="fund-academy" data-id="${academy.id}" class="secondary small" ${cooldown > 0 ? "disabled" : ""}>
+              ${cooldown > 0 ? `Disponible dans ${cooldown} sem.` : `Financer le programme jeunes (${FUND_ACADEMY_COST.toLocaleString("fr-FR")}€)`}
+            </button>
+          </div>
+        </div>`;
+    })
+    .join("");
+
+  return `
+    <h2>Monde — Académies</h2>
+    <p class="muted">Chaque académie parraine quelques jeunes pilotes du vivier et vise à les placer dans son
+    programme phare. Les recruter directement coûte plus cher tant que la relation reste basse — ils partent
+    aussi définitivement du vivier si l'académie les fait progresser ailleurs avant que tu agisses.</p>
+    <div class="card-grid">${cards || `<p class="muted">Aucune académie.</p>`}</div>`;
 }
 
 const STAFF_SORTERS = {
